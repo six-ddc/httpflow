@@ -1,7 +1,7 @@
 
 default: all
 
-CXXFLAGS=-std=c++11 -O2
+CXXFLAGS=-O2
 LIBS=-lz -lpcap
 
 PREFIX?=/usr/local
@@ -11,10 +11,10 @@ INSTALL=install
 
 HTTPFLOW_BIN=httpflow
 
-http_flow.o:
+http_flow.o: http_flow.cpp
 	$(CXX) $(CXXFLAGS) -c http_flow.cpp -o http_flow.o
 
-http_parser.o:
+http_parser.o: http_parser.cpp
 	$(CXX) $(CXXFLAGS) -c http_parser.cpp -o http_parser.o
 
 all: http_flow.o http_parser.o

@@ -46,7 +46,6 @@
 struct capture_config {
 #define IFNAMSIZ    16
     int snaplen;
-    unsigned short port;
     std::string output_path;
     char device[IFNAMSIZ];
     std::string filter;
@@ -205,7 +204,8 @@ static bool gzip_decompress(std::string &src, std::string &dst) {
 static std::string urlencode(const std::string &s) {
     static const char lookup[] = "0123456789abcdef";
     std::stringstream e;
-    for (const char c : s) {
+    for (int i = 0; i < s.size(); ++i) {
+        const char c = s[i];
         if (('0' <= c && c <= '9') || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') ||
             (c == '-' || c == '_' || c == '.' || c == '~')) {
             e << c;
@@ -245,7 +245,7 @@ static bool process_tcp(struct packet_info *packet, const u_char *content, size_
         std::cerr << "received truncated TCP datagram." << std::endl;
         return false;
     }
-    auto tcp_header = reinterpret_cast<const struct tcphdr *>(content);
+    const struct tcphdr *tcp_header = reinterpret_cast<const struct tcphdr *>(content);
 
     size_t tcp_header_len = TH_OFF(tcp_header) << 2;
     if (len < tcp_header_len) {
@@ -318,7 +318,7 @@ static bool process_ipv4(struct packet_info *packet, const u_char *content, size
         std::cerr << "received truncated IP datagram." << std::endl;
         return false;
     }
-    auto ip_header = reinterpret_cast<const struct ip *>(content);
+    const struct ip *ip_header = reinterpret_cast<const struct ip *>(content);
     if (4 != IP_V(ip_header) || ip_header->ip_p != IPPROTO_TCP) {
         return false;
     }
@@ -357,7 +357,7 @@ static bool process_ethernet(struct packet_info *packet, const u_char *content, 
         std::cerr << "received truncated Ether datagram." << std::endl;
         return false;
     }
-    auto ethernet = reinterpret_cast<const struct ether_header *>(content);
+    const struct ether_header *ethernet = reinterpret_cast<const struct ether_header *>(content);
     u_int16_t type = ntohs(ethernet->ether_type);
     if (type != ETHERTYPE_IP) {
         return false;
@@ -368,15 +368,6 @@ static bool process_ethernet(struct packet_info *packet, const u_char *content, 
 }
 
 static void save_http_request(const custom_parser *parser, const capture_config *conf, const std::string &join_addr) {
-    /*
-    std::string path = conf->output_path + "/" + parser->get_host();
-    int mk_ret = mkdir(path.c_str(), S_IRWXU);
-    if (mk_ret != 0 && errno != EEXIST) {
-        std::cerr << "mkdir [" << path << "] failed. ret=" << mk_ret << std::endl;
-        exit(1);
-    }
-    std::string save_filename = path + "/" + urlencode(parser->get_url());
-    */
     if (!conf->output_path.empty()) {
         std::string save_filename = conf->output_path + "/" + parser->get_host();
         std::ofstream out(save_filename, std::ios::app | std::ios::out);
@@ -415,7 +406,7 @@ bool custom_parser::parse(const std::string &body, enum http_parser_type type) {
     }
     if (parser.type == HTTP_REQUEST) {
         request.append(body);
-    } else {
+    } else if (parser.type == HTTP_RESPONSE) {
         response.append(body);
     }
     size_t parse_bytes = http_parser_execute(&parser, &settings, body.c_str(), body.size());
@@ -450,7 +441,7 @@ int custom_parser::on_header_field(http_parser *parser, const char *at, size_t l
 }
 
 int custom_parser::on_header_value(http_parser *parser, const char *at, size_t length) {
-    auto self = reinterpret_cast<custom_parser *>(parser->data);
+    custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
     if (parser->type == HTTP_RESPONSE) {
         if (self->temp_header_field == "content-encoding" && std::strstr(at, "gzip")) {
             self->gzip_flag = true;
@@ -509,7 +500,7 @@ void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *
     // Data: |       Mac         |        Ip          |           TCP                  |
     // Len : |   ETHER_HDR_LEN   |   ip_header->ip_hl << 2   | tcp_header->th_off << 2 + sizeof body |
 
-    auto conf = reinterpret_cast<capture_config *>(arg);
+    capture_config *conf = reinterpret_cast<capture_config *>(arg);
 
     struct packet_info packet;
     bool ret = process_ethernet(&packet, content, header->caplen);
@@ -520,30 +511,28 @@ void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *
     std::string join_addr;
     get_join_addr(packet.src_addr, packet.dst_addr, join_addr);
 
-    auto iter = http_requests.find(join_addr);
+    std::map<std::string, std::list<custom_parser *> >::iterator iter = http_requests.find(join_addr);
     if (iter == http_requests.end() || iter->second.empty()) {
         if (!packet.body.empty()) {
-            auto parser = new custom_parser;
+            custom_parser *parser = new custom_parser;
             if (parser->parse(packet.body, HTTP_REQUEST)) {
                 parser->set_addr(packet.src_addr, packet.dst_addr);
                 std::list<custom_parser *> requests;
                 requests.push_back(parser);
-                http_requests.emplace(std::make_pair(join_addr, requests));
+                http_requests.insert(std::make_pair(join_addr, requests));
             } else {
                 delete parser;
             }
         }
     } else {
         std::list<custom_parser *> &parser_list = iter->second;
-        for (auto parser : parser_list) {
-        }
-        auto last_parser = *(parser_list.rbegin());
+        custom_parser *last_parser = *(parser_list.rbegin());
 
         if (!packet.body.empty()) {
             if (last_parser->is_request_address(packet.src_addr)) {
                 // Request
                 if (last_parser->is_request_complete()) {
-                    auto parser = new custom_parser;
+                    custom_parser* parser = new custom_parser;
                     if (parser->parse(packet.body, HTTP_REQUEST)) {
                         parser->set_addr(packet.src_addr, packet.dst_addr);
                         parser_list.push_back(parser);
@@ -552,7 +541,7 @@ void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *
                     last_parser->parse(packet.body, HTTP_REQUEST);
                 }
             } else {
-                for (auto it = parser_list.begin(); it != parser_list.end(); ++it) {
+                for (std::list<custom_parser *>::iterator it = parser_list.begin(); it != parser_list.end(); ++it) {
                     if (!(*it)->is_response_complete()) {
                         (*it)->parse(packet.body, HTTP_RESPONSE);
                         break;
@@ -564,7 +553,7 @@ void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *
             }
         }
 
-        for (auto it = parser_list.begin(); it != parser_list.end();) {
+        for (std::list<custom_parser *>::iterator it = parser_list.begin(); it != parser_list.end();) {
             if ((*it)->is_response_complete()) {
                 save_http_request((*it), conf, join_addr);
                 delete (*it);
@@ -585,21 +574,20 @@ static const struct option longopts[] = {
         {"interface",       required_argument, NULL, 'i'},
         {"filter",          required_argument, NULL, 'f'},
         {"snapshot-length", required_argument, NULL, 's'},
-        {"port",            required_argument, NULL, 'p'},
         {"output-path",     required_argument, NULL, 'w'},
         {"output-pipe",     no_argument,       NULL, 'x'},
         {NULL, 0,                              NULL, 0}
 };
 
-#define SHORTOPTS "hi:f:s:p:w:x"
+#define SHORTOPTS "hi:f:s:w:x"
 
 extern char pcap_version[];
 
 int print_usage() {
-    std::cerr << "libpcap version" << pcap_version << "\n"
+    std::cerr << "libpcap version " << pcap_version << "\n"
               << "httpdump v0.1\n"
               << "\n"
-              << "Usage: http_dump [-i interface] [-f filter] [-s snapshot-length] [-p port] [-w output-path]"
+              << "Usage: http_dump [-i interface] [-f filter] [-s snapshot-length] [-w output-path]"
               << "\n";
     exit(1);
 }
@@ -616,10 +604,9 @@ void print_pipeline() {
 }
 
 capture_config *default_config() {
-    auto conf = new capture_config;
+    capture_config *conf = new capture_config;
 
     conf->snaplen = MAXIMUM_SNAPLEN;
-    conf->port = 0;
     conf->device[0] = 0;
     conf->filter = "tcp";
 
@@ -645,9 +632,6 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
                 if (conf->snaplen == 0) {
                     conf->snaplen = MAXIMUM_SNAPLEN;
                 }
-                break;
-            case 'p':
-                conf->port = atoi(optarg);
                 break;
             case 'h':
                 print_usage();
@@ -681,7 +665,6 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
 
     std::cout << "interface: " << conf->device << std::endl;
     std::cout << "snapshot-length: " << conf->snaplen << std::endl;
-    std::cout << "port: " << conf->port << std::endl;
     std::cout << "output_path: " << conf->output_path << std::endl;
     std::cout << "filter: " << conf->filter << std::endl;
 
@@ -695,7 +678,7 @@ int main(int argc, char **argv) {
     bpf_u_int32 net, mask;
     struct bpf_program fcode;
 
-    auto cap_conf = default_config();
+    capture_config *cap_conf = default_config();
     if (-1 == init_capture_config(argc, argv, cap_conf, errbuf)) {
         return 1;
     }
@@ -705,7 +688,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // 混杂模式, 不超时
     handle = pcap_open_live(cap_conf->device, cap_conf->snaplen, 1, 1, errbuf);
     if (!handle) {
         std::cerr << "pcap_open_live(): " << errbuf << std::endl;
