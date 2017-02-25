@@ -4,6 +4,7 @@
 #include <memory.h>
 #include <stdlib.h>
 #include <getopt.h>
+#include <errno.h>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -256,8 +257,11 @@ static bool process_tcp(struct packet_info *packet, const u_char *content, size_
     uint16_t src_port = ntohs(tcp_header->th_sport);
     uint16_t dst_port = ntohs(tcp_header->th_dport);
 
-    packet->src_addr.append(":" + std::to_string(src_port));
-    packet->dst_addr.append(":" + std::to_string(dst_port));
+    char buff[128];
+    std::snprintf(buff, 128, "%s:%d", packet->src_addr.c_str(), src_port);
+    packet->src_addr.assign(buff);
+    std::snprintf(buff, 128, "%s:%d", packet->dst_addr.c_str(), dst_port);
+    packet->dst_addr.assign(buff);
 
     /*
     std::cout<<"( " ANSI_COLOR_CYAN;
@@ -370,7 +374,7 @@ static bool process_ethernet(struct packet_info *packet, const u_char *content, 
 static void save_http_request(const custom_parser *parser, const capture_config *conf, const std::string &join_addr) {
     if (!conf->output_path.empty()) {
         std::string save_filename = conf->output_path + "/" + parser->get_host();
-        std::ofstream out(save_filename, std::ios::app | std::ios::out);
+        std::ofstream out(save_filename.c_str(), std::ios::app | std::ios::out);
         if (out.is_open()) {
             out << *parser << std::endl;
             out.close();
@@ -487,7 +491,7 @@ int custom_parser::on_message_complete(http_parser *parser) {
     if (self->gzip_flag) {
         std::string new_body;
         if (gzip_decompress(self->response_body, new_body)) {
-            self->response_body = std::move(new_body);
+            self->response_body = new_body;
         } else {
             std::cerr << ANSI_COLOR_RED "uncompress error" ANSI_COLOR_RESET << std::endl;
         }
