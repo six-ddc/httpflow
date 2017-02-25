@@ -4,18 +4,30 @@
 
 ## Installation
 
-*. Install [zlib](http://www.zlib.net/), [libpcap](http://www.tcpdump.org/)
+1. Install [zlib](http://www.zlib.net/), [libpcap](http://www.tcpdump.org/)
 
 ```bash
+#  Based on SourceCode
 > curl -sL http://www.zlib.net/zlib-1.2.11.tar.gz -O
 > curl -sL http://www.tcpdump.org/release/libpcap-1.8.1.tar.gz -O
 > tar zxvf libpcap-1.8.1.tar.gza
 > tar zxvf zlib-1.2.11.tar.gz
 > cd libpcap-1.8.1 && ./configure && make && make install && cd ..
 > cd zlib-1.2.11 && ./configure && make && make install && cd ..
+
+# Or 
+
+# On CentOS
+yum install libpcap-devel zlib-devel
+
+# On Ubuntu
+apt-get install libpcap-dev zlib1g-dev
+
+# On Darwin
+# do nothing
 ```
 
-*. build httpflow
+2. build httpflow
 
 ```bash
 > git clone https://github.com/six-ddc/httpflow
@@ -54,6 +66,3 @@ Usage: http_dump [-i interface] [-f filter] [-s snapshot-length] [-w output-path
 # For the expression syntax, see pcap-filter(7).
 > httpflow -f 'tcp port 80 and host baidu.com'
 ```
-
-
-
