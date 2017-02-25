@@ -4,7 +4,7 @@
 
 ## Installation
 
-*. Install [zlib](http://www.zlib.net/), [libpcap](http://www.tcpdump.org/)
+* Install [zlib](http://www.zlib.net/), [libpcap](http://www.tcpdump.org/)
 
 ```bash
 ##  Based on SourceCode
@@ -27,7 +27,7 @@ apt-get install libpcap-dev zlib1g-dev
 ### do nothing
 ```
 
-*. build httpflow
+* build httpflow
 
 ```bash
 > git clone https://github.com/six-ddc/httpflow
