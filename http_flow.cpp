@@ -17,6 +17,8 @@
 #include <zlib.h>
 #include "http_parser.h"
 
+#define HTTPFLOW_VERSION "0.0.1"
+
 #define USE_ANSI_COLOR
 
 #ifdef USE_ANSI_COLOR
@@ -589,7 +591,7 @@ extern char pcap_version[];
 
 int print_usage() {
     std::cerr << "libpcap version " << pcap_version << "\n"
-              << "httpdump v0.1\n"
+              << "httpflow " HTTPFLOW_VERSION "\n"
               << "\n"
               << "Usage: http_dump [-i interface] [-f filter] [-s snapshot-length] [-w output-path]"
               << "\n";
