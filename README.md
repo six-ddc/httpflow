@@ -44,7 +44,7 @@ or directly download [Release](https://github.com/six-ddc/httpflow/releases) bin
 libpcap version 1.3.0
 httpflow 0.0.1
 
-Usage: http_dump [-i interface] [-f filter] [-s snapshot-length] [-w output-path]
+Usage: httpflow [-i interface] [-f filter] [-s snapshot-length] [-w output-path]
 ```
 
 * Capture default interface
