@@ -593,7 +593,7 @@ int print_usage() {
     std::cerr << "libpcap version " << pcap_version << "\n"
               << "httpflow " HTTPFLOW_VERSION "\n"
               << "\n"
-              << "Usage: http_dump [-i interface] [-f filter] [-s snapshot-length] [-w output-path]"
+              << "Usage: httpflow [-i interface] [-f filter] [-s snapshot-length] [-w output-path]"
               << "\n";
     exit(1);
 }
