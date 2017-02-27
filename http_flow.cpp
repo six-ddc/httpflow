@@ -61,6 +61,36 @@ struct packet_info {
     std::string body;
 };
 
+static bool is_plain_text(const std::string &s) {
+	// The algorithm works by dividing the set of bytecodes [0..255] into three
+	// categories:
+	// 	- The white list of textual bytecodes:
+	//  	9 (TAB), 10 (LF), 13 (CR), 32 (SPACE) to 255.
+	// 	- The gray list of tolerated bytecodes:
+	//  	7 (BEL), 8 (BS), 11 (VT), 12 (FF), 26 (SUB), 27 (ESC).
+	// 	- The black list of undesired, non-textual bytecodes:
+	//  	0 (NUL) to 6, 14 to 31.
+	// If a file contains at least one byte that belongs to the white list and
+	// no byte that belongs to the black list, then the file is categorized as
+	// plain text; otherwise, it is categorized as binary.  (The boundary case,
+	// when the file is empty, automatically falls into the latter category.)
+    if (s.empty()) {
+        return true;
+    }
+    size_t white_list_char_count = 0;
+	for (int i = 0; i < s.size(); ++i) {
+		const unsigned char c = s[i];
+        if (c == 9 || c == 10 || c == 13 || (c >= 32 && c <= 255)) {
+            // white list
+            white_list_char_count++;
+        } else if ((c <= 6) || (c >= 14 && c <= 31)) {
+            // black list
+            return 0;
+        }
+	}
+    return white_list_char_count >= 1 ? true : false;
+}
+
 class custom_parser {
 
     friend std::ofstream& operator<<(std::ofstream& out, const custom_parser& f);
@@ -138,13 +168,21 @@ std::ostream& operator<<(std::ostream& out, const custom_parser& parser) {
     out
         << ANSI_COLOR_GREEN
         << parser.request_header
-        << ANSI_COLOR_RESET
-        << parser.request_body
-        << std::endl
+        << ANSI_COLOR_RESET;
+    if (is_plain_text(parser.request_body)) {
+        out << parser.request_body;
+    } else {
+        out << ANSI_COLOR_RED "[binary request body]" ANSI_COLOR_RESET;
+    }
+    out << std::endl
         << ANSI_COLOR_BLUE
         << parser.response_header
-        << ANSI_COLOR_RESET
-        << parser.response_body;
+        << ANSI_COLOR_RESET;
+    if (is_plain_text(parser.response_body)) {
+        out << parser.response_body;
+    } else {
+        out << ANSI_COLOR_RED "[binary response body]" ANSI_COLOR_RESET;
+    }
     return out;
 }
 
