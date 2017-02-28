@@ -382,8 +382,7 @@ static bool process_ipv4(struct packet_info *packet, const u_char *content, size
     }
     size_t ip_payload_len = ip_len - ip_header_len;
     content += ip_header_len;
-    process_tcp(packet, content, ip_payload_len);
-    return true;
+    return process_tcp(packet, content, ip_payload_len);
 }
 
 #define    ETHER_ADDR_LEN      6
@@ -407,8 +406,7 @@ static bool process_ethernet(struct packet_info *packet, const u_char *content, 
         return false;
     }
     content += ether_header_len;
-    process_ipv4(packet, content, len - ether_header_len);
-    return true;
+    return process_ipv4(packet, content, len - ether_header_len);
 }
 
 static void save_http_request(const custom_parser *parser, const capture_config *conf, const std::string &join_addr) {
