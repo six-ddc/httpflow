@@ -44,7 +44,7 @@ or directly download [Release](https://github.com/six-ddc/httpflow/releases) bin
 libpcap version 1.3.0
 httpflow 0.0.1
 
-Usage: httpflow [-i interface] [-f filter] [-s snapshot-length] [-w output-path]
+Usage: httpflow [-i interface] [-f filter] [-r pcap-file] [-w output-path] [-x pipe-line] [-s snapshot-length]
 ```
 
 * Capture default interface
@@ -65,4 +65,11 @@ Usage: httpflow [-i interface] [-f filter] [-s snapshot-length] [-w output-path]
 # If no expression is given, all packets on the net will be dumped.
 # For the expression syntax, see pcap-filter(7).
 > httpflow -f 'tcp port 80 and host baidu.com'
+```
+
+* Read packets from file
+
+```bash
+# tcpdump -w a.cap
+> httpflow -r a.cap
 ```
