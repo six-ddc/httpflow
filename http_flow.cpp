@@ -51,6 +51,8 @@ struct capture_config {
     int snaplen;
     std::string output_path;
     char device[IFNAMSIZ];
+    std::string file_name;
+    bool pipe_line;
     std::string filter;
 };
 
@@ -537,15 +539,13 @@ int custom_parser::on_message_complete(http_parser *parser) {
     return 0;
 }
 
-void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *content) {
+void process_packet(const capture_config *conf, const u_char* data, size_t len) {
 
     // Data: |       Mac         |        Ip          |           TCP                  |
     // Len : |   ETHER_HDR_LEN   |   ip_header->ip_hl << 2   | tcp_header->th_off << 2 + sizeof body |
 
-    capture_config *conf = reinterpret_cast<capture_config *>(arg);
-
     struct packet_info packet;
-    bool ret = process_ethernet(&packet, content, header->caplen);
+    bool ret = process_ethernet(&packet, data, len);
     if (!ret || packet.body.empty()) {
         return;
     }
@@ -611,17 +611,23 @@ void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *
     }
 }
 
+void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *content) {
+    capture_config *conf = reinterpret_cast<capture_config *>(arg);
+    return process_packet(conf, content, header->caplen);
+}
+
 static const struct option longopts[] = {
         {"help",            no_argument,       NULL, 'h'},
         {"interface",       required_argument, NULL, 'i'},
         {"filter",          required_argument, NULL, 'f'},
+        {"pcap-file",       required_argument, NULL, 'r'},
         {"snapshot-length", required_argument, NULL, 's'},
         {"output-path",     required_argument, NULL, 'w'},
-        {"output-pipe",     no_argument,       NULL, 'x'},
+        {"pipe-line",       no_argument,       NULL, 'x'},
         {NULL, 0,                              NULL, 0}
 };
 
-#define SHORTOPTS "hi:f:s:w:x"
+#define SHORTOPTS "hi:f:r:s:w:x"
 
 extern char pcap_version[];
 
@@ -629,7 +635,7 @@ int print_usage() {
     std::cerr << "libpcap version " << pcap_version << "\n"
               << "httpflow " HTTPFLOW_VERSION "\n"
               << "\n"
-              << "Usage: httpflow [-i interface] [-f filter] [-s snapshot-length] [-w output-path]"
+              << "Usage: httpflow [-i interface] [-f filter] [-r pcap-file] [-s snapshot-length] [-w output-path] [-x pipe-line]"
               << "\n";
     exit(1);
 }
@@ -637,20 +643,13 @@ int print_usage() {
 extern char *optarg;            /* getopt(3) external variables */
 extern int optind, opterr, optopt;
 
-void print_pipeline() {
-    std::string cin_line;
-    while (std::getline(std::cin, cin_line)) {
-        std::cout << cin_line << std::endl;
-    }
-    exit(0);
-}
-
 capture_config *default_config() {
     capture_config *conf = new capture_config;
 
     conf->snaplen = MAXIMUM_SNAPLEN;
     conf->device[0] = 0;
     conf->filter = "tcp";
+    conf->pipe_line = false;
 
     return conf;
 }
@@ -669,6 +668,9 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
             case 'f':
                 conf->filter = optarg;
                 break;
+            case 'r':
+                conf->file_name = optarg;
+                break;
             case 's':
                 conf->snaplen = atoi(optarg);
                 if (conf->snaplen == 0) {
@@ -682,7 +684,7 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
                 conf->output_path = optarg;
                 break;
             case 'x':
-                print_pipeline();
+                conf->pipe_line = true;
                 break;
             default:
                 exit(1);
@@ -705,8 +707,13 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
         }
     }
 
-    std::cout << "interface: " << conf->device << std::endl;
-    std::cout << "snapshot-length: " << conf->snaplen << std::endl;
+    if (conf->file_name.empty()) {
+        std::cout << "interface: " << conf->device << std::endl;
+        std::cout << "snapshot-length: " << conf->snaplen << std::endl;
+    } else {
+        std::cout << "pcap-file: " << conf->file_name << std::endl;
+    }
+    std::cout << "pipe_line: " << (conf->pipe_line ? "true" : "false") << std::endl;
     std::cout << "output_path: " << conf->output_path << std::endl;
     std::cout << "filter: " << conf->filter << std::endl;
 
@@ -725,15 +732,29 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (-1 == pcap_lookupnet(cap_conf->device, &net, &mask, errbuf)) {
-        std::cerr << "pcap_lookupnet(): " << errbuf << std::endl;
-        return 1;
-    }
+    if (cap_conf->pipe_line) {
+        handle = pcap_fopen_offline(stdin, errbuf);
+        if (!handle) {
+            std::cerr << "pcap_fopen_offline(): " << errbuf << std::endl;
+            return 1;
+        }
+    } else if (!cap_conf->file_name.empty()) {
+        handle = pcap_open_offline(cap_conf->file_name.c_str(), errbuf);
+        if (!handle) {
+            std::cerr << "pcap_open_offline(): " << errbuf << std::endl;
+            return 1;
+        }
+    } else {
+        if (-1 == pcap_lookupnet(cap_conf->device, &net, &mask, errbuf)) {
+            std::cerr << "pcap_lookupnet(): " << errbuf << std::endl;
+            return 1;
+        }
 
-    handle = pcap_open_live(cap_conf->device, cap_conf->snaplen, 1, 1, errbuf);
-    if (!handle) {
-        std::cerr << "pcap_open_live(): " << errbuf << std::endl;
-        return 1;
+        handle = pcap_open_live(cap_conf->device, cap_conf->snaplen, 1, 1, errbuf);
+        if (!handle) {
+            std::cerr << "pcap_open_live(): " << errbuf << std::endl;
+            return 1;
+        }
     }
 
     if (-1 == pcap_compile(handle, &fcode, cap_conf->filter.c_str(), 1, mask)) {
@@ -755,6 +776,8 @@ int main(int argc, char **argv) {
         pcap_close(handle);
         return 1;
     }
+
+    delete cap_conf;
 
     pcap_close(handle);
     return 0;
