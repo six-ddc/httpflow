@@ -1,5 +1,7 @@
 # httpflow
 
+[![Build Status](https://travis-ci.org/six-ddc/httpflow.svg?branch=master)](https://travis-ci.org/six-ddc/httpflow)
+
 ![](https://github.com/six-ddc/httpflow/blob/master/demo.gif?raw=true)
 
 ## Installation
