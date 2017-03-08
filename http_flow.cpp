@@ -637,7 +637,7 @@ int print_usage() {
               << "\n"
               << "Usage: httpflow [-i interface] [-f filter] [-r pcap-file] [-s snapshot-length] [-w output-path] [-x pipe-line]"
               << "\n";
-    exit(1);
+    exit(0);
 }
 
 extern char *optarg;            /* getopt(3) external variables */
