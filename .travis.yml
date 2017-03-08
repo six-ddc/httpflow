@@ -5,8 +5,8 @@ os:
     - osx
 
 compiler:
-    - clang
     - gcc
+    - clang
 
 matrix:
     include:
@@ -22,6 +22,6 @@ addons:
             - libpcap-dev
             - zlib1g-dev
 
-install:
+script:
     - make
     - sudo make install
