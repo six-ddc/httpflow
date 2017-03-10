@@ -59,7 +59,7 @@ struct capture_config {
 struct packet_info {
     std::string src_addr;
     std::string dst_addr;
-
+    bool        is_fin;
     std::string body;
 };
 
@@ -305,6 +305,7 @@ static bool process_tcp(struct packet_info *packet, const u_char *content, size_
     std::snprintf(buff, 128, "%s:%d", packet->dst_addr.c_str(), dst_port);
     packet->dst_addr.assign(buff);
 
+    packet->is_fin = !!(tcp_header->th_flags & TH_FIN);
     /*
     std::cout<<"( " ANSI_COLOR_CYAN;
     if (tcp_header->th_flags & TH_FIN) {
@@ -546,7 +547,7 @@ void process_packet(const capture_config *conf, const u_char* data, size_t len) 
 
     struct packet_info packet;
     bool ret = process_ethernet(&packet, data, len);
-    if (!ret || packet.body.empty()) {
+    if ((!ret || packet.body.empty()) && !packet.is_fin) {
         return;
     }
 
@@ -578,6 +579,8 @@ void process_packet(const capture_config *conf, const u_char* data, size_t len) 
                     if (parser->parse(packet.body, HTTP_REQUEST)) {
                         parser->set_addr(packet.src_addr, packet.dst_addr);
                         parser_list.push_back(parser);
+                    } else {
+                        delete parser;
                     }
                 } else {
                     last_parser->parse(packet.body, HTTP_REQUEST);
@@ -596,7 +599,7 @@ void process_packet(const capture_config *conf, const u_char* data, size_t len) 
         }
 
         for (std::list<custom_parser *>::iterator it = parser_list.begin(); it != parser_list.end();) {
-            if ((*it)->is_response_complete()) {
+            if ((*it)->is_response_complete() || packet.is_fin) {
                 save_http_request((*it), conf, join_addr);
                 delete (*it);
                 it = iter->second.erase(it);
@@ -745,16 +748,17 @@ int main(int argc, char **argv) {
             return 1;
         }
     } else {
+        handle = pcap_open_live(cap_conf->device, cap_conf->snaplen, 1, 1000, errbuf);
+        if (!handle) {
+            std::cerr << "pcap_open_live(): " << errbuf << std::endl;
+            return 1;
+        }
+
         if (-1 == pcap_lookupnet(cap_conf->device, &net, &mask, errbuf)) {
             std::cerr << "pcap_lookupnet(): " << errbuf << std::endl;
             return 1;
         }
 
-        handle = pcap_open_live(cap_conf->device, cap_conf->snaplen, 1, 1, errbuf);
-        if (!handle) {
-            std::cerr << "pcap_open_live(): " << errbuf << std::endl;
-            return 1;
-        }
     }
 
     if (-1 == pcap_compile(handle, &fcode, cap_conf->filter.c_str(), 1, mask)) {
