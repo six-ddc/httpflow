@@ -54,6 +54,7 @@ struct capture_config {
     std::string file_name;
     bool pipe_line;
     std::string filter;
+    int datalink_size;
 };
 
 struct packet_info {
@@ -397,21 +398,6 @@ struct ether_header {
     u_short ether_type;
 };
 
-static bool process_ethernet(struct packet_info *packet, const u_char *content, size_t len) {
-    size_t ether_header_len = sizeof(struct ether_header);
-    if (len < ether_header_len) {
-        std::cerr << "received truncated Ether datagram." << std::endl;
-        return false;
-    }
-    const struct ether_header *ethernet = reinterpret_cast<const struct ether_header *>(content);
-    u_int16_t type = ntohs(ethernet->ether_type);
-    if (type != ETHERTYPE_IP) {
-        return false;
-    }
-    content += ether_header_len;
-    return process_ipv4(packet, content, len - ether_header_len);
-}
-
 static void save_http_request(const custom_parser *parser, const capture_config *conf, const std::string &join_addr) {
     if (!conf->output_path.empty()) {
         std::string save_filename = conf->output_path + "/" + parser->get_host();
@@ -542,11 +528,8 @@ int custom_parser::on_message_complete(http_parser *parser) {
 
 void process_packet(const capture_config *conf, const u_char* data, size_t len) {
 
-    // Data: |       Mac         |        Ip          |           TCP                  |
-    // Len : |   ETHER_HDR_LEN   |   ip_header->ip_hl << 2   | tcp_header->th_off << 2 + sizeof body |
-
     struct packet_info packet;
-    bool ret = process_ethernet(&packet, data, len);
+    bool ret = process_ipv4(&packet, data, len);
     if ((!ret || packet.body.empty()) && !packet.is_fin) {
         return;
     }
@@ -615,8 +598,17 @@ void process_packet(const capture_config *conf, const u_char* data, size_t len) 
 }
 
 void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *content) {
+ 
+    // Data: |       Mac         |        Ip          |           TCP                  |
+    // Len : |   ETHER_HDR_LEN   |   ip_header->ip_hl << 2   | tcp_header->th_off << 2 + sizeof body |
+
     capture_config *conf = reinterpret_cast<capture_config *>(arg);
-    return process_packet(conf, content, header->caplen);
+
+    // skip datalink
+    content += conf->datalink_size;
+    size_t len = header->caplen - conf->datalink_size;
+
+    return process_packet(conf, content, len);
 }
 
 static const struct option longopts[] = {
@@ -711,16 +703,207 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
     }
 
     if (conf->file_name.empty()) {
-        std::cout << "interface: " << conf->device << std::endl;
-        std::cout << "snapshot-length: " << conf->snaplen << std::endl;
+        std::cerr << "interface: " << conf->device << std::endl;
+        std::cerr << "snapshot-length: " << conf->snaplen << std::endl;
     } else {
-        std::cout << "pcap-file: " << conf->file_name << std::endl;
+        std::cerr << "pcap-file: " << conf->file_name << std::endl;
     }
-    std::cout << "pipe_line: " << (conf->pipe_line ? "true" : "false") << std::endl;
-    std::cout << "output_path: " << conf->output_path << std::endl;
-    std::cout << "filter: " << conf->filter << std::endl;
+    if (conf->pipe_line) {
+        std::cerr << "pipe_line: " << (conf->pipe_line ? "true" : "false") << std::endl;
+    }
+    if (!conf->output_path.empty()) {
+        std::cerr << "output_path: " << conf->output_path << std::endl;
+    }
+    std::cerr << "filter: " << conf->filter << std::endl;
 
     return 0;
+}
+
+std::string datalink2str(int dl_id)
+{
+	char str[128];
+
+	switch(dl_id) {
+#ifdef DLT_NULL
+	case DLT_NULL:
+		strcpy(str, "DLT_NULL");
+		break;
+#endif
+#ifdef DLT_EN10MB
+	case DLT_EN10MB:
+		strcpy(str, "DLT_EN10MB");
+		break;
+#endif
+#ifdef DLT_IEEE802
+	case DLT_IEEE802:
+		strcpy(str, "DLT_IEEE802");
+		break;
+#endif
+#ifdef DLT_ARCNET
+	case DLT_ARCNET:
+		strcpy(str, "DLT_ARCNET");
+		break;
+#endif
+#ifdef DLT_FDDI
+	case DLT_FDDI:
+		strcpy(str, "DLT_FDDI");
+		break;
+#endif
+#ifdef DLT_ATM_RFC1483
+	case DLT_ATM_RFC1483:
+		strcpy(str, "DLT_ATM_RFC1483");
+		break;
+#endif
+#ifdef DLT_RAW  
+	case DLT_RAW:  
+		strcpy(str, "DLT_RAW"); 
+		break; 
+#endif
+#ifdef DLT_PPP_SERIAL
+	case DLT_PPP_SERIAL:
+		strcpy(str, "DLT_PPP_SERIAL");
+		break;
+#endif
+#ifdef DLT_PPP_ETHER
+	case DLT_PPP_ETHER:
+		strcpy(str, "DLT_PPP_ETHER");
+		break;
+#endif
+#ifdef DLT_C_HDLC
+	case DLT_C_HDLC:
+		strcpy(str, "DLT_C_HDLC");
+		break;
+#endif
+#ifdef DLT_IEEE802_11
+	case DLT_IEEE802_11:
+		strcpy(str, "DLT_IEEE802_11");
+		break;
+#endif
+#ifdef DLT_LOOP
+	case DLT_LOOP:
+		strcpy(str, "DLT_LOOP");
+		break;
+#endif
+#ifdef DLT_LINUX_SLL
+	case DLT_LINUX_SLL:
+		strcpy(str, "DLT_LINUX_SLL");
+		break;
+#endif
+#ifdef DLT_LTALK
+	case DLT_LTALK:
+		strcpy(str, "DLT_LTALK");
+		break;
+#endif
+#ifdef DLT_PFLOG
+	case DLT_PFLOG:
+		strcpy(str, "DLT_PFLOG");
+		break;
+#endif
+#ifdef DLT_PPP
+	case DLT_PPP:
+		strcpy(str, "DLT_PPP");
+		break;
+#endif 
+#ifdef DLT_SLIP
+	case DLT_SLIP:
+		strcpy(str, "DLT_SLIP");
+		break;
+#endif
+#ifdef DLT_SLIP_BSDOS
+	case DLT_SLIP_BSDOS:
+		strcpy(str, "DLT_SLIP_BSDOS");
+		break;
+#endif
+#ifdef DLT_PPP_BSDOS
+	case DLT_PPP_BSDOS:
+		strcpy(str, "DLT_PPP_BSDOS");
+		break;
+#endif
+
+	default:
+		sprintf(str, "UNKNOWN(0x%x)(%d)" , dl_id , dl_id);
+		break;
+
+	}
+	return std::string(str);
+}
+
+int datalink2off(int dl_id)
+{
+	int dl_size = 0;
+	switch(dl_id) {
+
+#ifdef DLT_NULL /* not tested */
+	case DLT_NULL:
+		dl_size = 4;
+		break;
+#endif
+#ifdef DLT_EN10MB
+	case DLT_EN10MB:
+		dl_size = 14;
+		break;
+#endif
+#ifdef DLT_RAW
+	case DLT_RAW:
+		dl_size = 0;
+		break;
+#endif
+#ifdef DLT_IEEE802_11 /* not tested */
+	case DLT_IEEE802_11:
+		dl_size = 24;
+		break;
+#endif
+#ifdef DLT_LOOP /* not tested */
+	case DLT_LOOP:
+		dl_size = 4;
+		break;
+#endif
+#ifdef DLT_PPP_ETHER
+	case DLT_PPP_ETHER:
+		dl_size = 8; 
+		break;
+#endif
+#ifdef DLT_LINUX_SLL
+	case DLT_LINUX_SLL:
+		dl_size = 16; 
+		break;
+#endif
+#ifdef DLT_PFLOG 
+	case DLT_PFLOG:
+		dl_size = 48;
+		break;
+#endif
+
+/* credits for DLT_PPP, DLT_SLIP, DLT_SLIP_BSDOS
+   and DLT_PPP_BSDOS offsets:
+   SNiFf v0.3 by uLiX
+   http://www.s0ftpj.org/bfi/online/bfi10/BFi10-05.html
+*/
+#ifdef DLT_PPP
+	case DLT_PPP:
+		dl_size = 4;
+		break;
+#endif
+#ifdef DLT_SLIP
+	case DLT_SLIP:
+		dl_size = 16;
+		break;
+#endif
+#ifdef DLT_SLIP_BSDOS
+	case DLT_SLIP_BSDOS:
+		dl_size = 24;
+		break;
+#endif
+#ifdef DLT_PPP_BSDOS
+	case DLT_PPP_BSDOS:
+		dl_size = 24;
+		break;
+#endif
+
+	default:
+		break;
+	}
+	return dl_size;
 }
 
 int main(int argc, char **argv) {
@@ -729,6 +912,8 @@ int main(int argc, char **argv) {
     pcap_t *handle = NULL;
     bpf_u_int32 net, mask;
     struct bpf_program fcode;
+    int datalink_id;
+    std::string datalink_str;
 
     capture_config *cap_conf = default_config();
     if (-1 == init_capture_config(argc, argv, cap_conf, errbuf)) {
@@ -748,20 +933,21 @@ int main(int argc, char **argv) {
             return 1;
         }
     } else {
-        handle = pcap_open_live(cap_conf->device, cap_conf->snaplen, 1, 1000, errbuf);
-        if (!handle) {
-            std::cerr << "pcap_open_live(): " << errbuf << std::endl;
-            return 1;
-        }
-
         if (-1 == pcap_lookupnet(cap_conf->device, &net, &mask, errbuf)) {
             std::cerr << "pcap_lookupnet(): " << errbuf << std::endl;
             return 1;
         }
 
+        handle = pcap_open_live(cap_conf->device, cap_conf->snaplen, 0, 1000, errbuf);
+        if (!handle) {
+            std::cerr << "pcap_open_live(): " << errbuf << std::endl;
+            return 1;
+        }
+
+        pcap_datalink(handle);
     }
 
-    if (-1 == pcap_compile(handle, &fcode, cap_conf->filter.c_str(), 1, mask)) {
+    if (-1 == pcap_compile(handle, &fcode, cap_conf->filter.c_str(), 0, mask)) {
         std::cerr << "pcap_compile(): " << pcap_geterr(handle) << std::endl;
         pcap_close(handle);
         return 1;
@@ -774,6 +960,11 @@ int main(int argc, char **argv) {
     }
 
     pcap_freecode(&fcode);
+
+	datalink_id = pcap_datalink(handle);
+	datalink_str = datalink2str(datalink_id);
+	cap_conf->datalink_size = datalink2off(datalink_id);
+    std::cerr << "datalink: " << datalink_str << " header size: " << cap_conf->datalink_size << std::endl;
 
     if (-1 == pcap_loop(handle, -1, pcap_callback, reinterpret_cast<u_char *>(cap_conf))) {
         std::cerr << "pcap_loop(): " << pcap_geterr(handle) << std::endl;
