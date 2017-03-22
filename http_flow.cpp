@@ -140,19 +140,13 @@ public:
         return request_complete_flag;
     }
 
-    inline std::string get_host() const {
-        return host;
-    }
-
-    inline std::string get_url() const {
-        return url;
-    }
-
     inline bool is_request_address(const std::string &address) const {
         return request_address == address;
     }
 
     void set_addr(const std::string &src_addr, const std::string &dst_addr);
+
+    void save_http_request(const capture_config *conf, const std::string &join_addr);
 
     static int on_url(http_parser *parser, const char *at, size_t length);
 
@@ -398,23 +392,6 @@ struct ether_header {
     u_short ether_type;
 };
 
-static void save_http_request(const custom_parser *parser, const capture_config *conf, const std::string &join_addr) {
-    if (!conf->output_path.empty()) {
-        std::string save_filename = conf->output_path + "/" + parser->get_host();
-        std::ofstream out(save_filename.c_str(), std::ios::app | std::ios::out);
-        if (out.is_open()) {
-            out << *parser << std::endl;
-            out.close();
-        } else {
-            std::cerr << "ofstream [" << save_filename << "] is not opened." << std::endl;
-            out.close();
-            exit(1);
-        }
-    } else {
-        std::cout << *parser << std::endl;
-    }
-}
-
 custom_parser::custom_parser() {
     request_complete_flag = false;
     response_complete_flag = false;
@@ -513,7 +490,6 @@ int custom_parser::on_message_complete(http_parser *parser) {
         self->request_complete_flag = true;
     } else if (parser->type == HTTP_RESPONSE) {
         self->response_complete_flag = true;
-        std::cout << ANSI_COLOR_CYAN << self->request_address << "->" << self->response_address << " " << self->host << " " << self->url << ANSI_COLOR_RESET << std::endl;
     }
     if (self->gzip_flag) {
         std::string new_body;
@@ -525,6 +501,25 @@ int custom_parser::on_message_complete(http_parser *parser) {
     }
     return 0;
 }
+
+void custom_parser::save_http_request(const capture_config *conf, const std::string &join_addr) {
+    std::cout << ANSI_COLOR_CYAN << request_address << "->" << response_address << " " << host << " " << url << ANSI_COLOR_RESET << std::endl;
+    if (!conf->output_path.empty()) {
+        std::string save_filename = conf->output_path + "/" + host;
+        std::ofstream out(save_filename.c_str(), std::ios::app | std::ios::out);
+        if (out.is_open()) {
+            out << *this << std::endl;
+            out.close();
+        } else {
+            std::cerr << "ofstream [" << save_filename << "] is not opened." << std::endl;
+            out.close();
+            exit(1);
+        }
+    } else {
+        std::cout << *this << std::endl;
+    }
+}
+
 
 void process_packet(const capture_config *conf, const u_char* data, size_t len) {
 
@@ -583,7 +578,7 @@ void process_packet(const capture_config *conf, const u_char* data, size_t len) 
 
         for (std::list<custom_parser *>::iterator it = parser_list.begin(); it != parser_list.end();) {
             if ((*it)->is_response_complete() || packet.is_fin) {
-                save_http_request((*it), conf, join_addr);
+                (*it)->save_http_request(conf, join_addr);
                 delete (*it);
                 it = iter->second.erase(it);
             } else {
