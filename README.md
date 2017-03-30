@@ -6,30 +6,28 @@
 
 ## Installation
 
+### MacOs
+
+```bash
+brew update
+brew install httpflow
+```
+
+### Linux
+
 * Install [zlib](http://www.zlib.net/), [libpcap](http://www.tcpdump.org/)
 
 ```bash
-##  Based on SourceCode
-> curl -sL http://www.zlib.net/zlib-1.2.11.tar.gz -O
-> curl -sL http://www.tcpdump.org/release/libpcap-1.8.1.tar.gz -O
-> tar zxvf libpcap-1.8.1.tar.gza
-> tar zxvf zlib-1.2.11.tar.gz
-> cd libpcap-1.8.1 && ./configure && make && make install && cd ..
-> cd zlib-1.2.11 && ./configure && make && make install && cd ..
-
-# Or 
-
 ## On CentOS
+yum update
 yum install libpcap-devel zlib-devel
 
-## On Ubuntu
+## On Ubuntu / Debian
+apt-get update
 apt-get install libpcap-dev zlib1g-dev
-
-## On Darwin
-### do nothing
 ```
 
-* build httpflow
+* Building httpflow
 
 ```bash
 > git clone https://github.com/six-ddc/httpflow
