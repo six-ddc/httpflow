@@ -15,6 +15,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <zlib.h>
+#include <unistd.h>
 #include "http_parser.h"
 
 #define HTTPFLOW_VERSION "0.0.2"
@@ -23,13 +24,13 @@
 
 #ifdef USE_ANSI_COLOR
 
-#define ANSI_COLOR_RED     "\x1b[31m"
-#define ANSI_COLOR_GREEN   "\x1b[32m"
-#define ANSI_COLOR_YELLOW  "\x1b[33m"
-#define ANSI_COLOR_BLUE    "\x1b[34m"
-#define ANSI_COLOR_MAGENTA "\x1b[35m"
-#define ANSI_COLOR_CYAN    "\x1b[36m"
-#define ANSI_COLOR_RESET   "\x1b[0m"
+#define ANSI_COLOR_RED     (is_atty ? "\x1b[31m" : "")
+#define ANSI_COLOR_GREEN   (is_atty ? "\x1b[32m" : "")
+#define ANSI_COLOR_YELLOW  (is_atty ? "\x1b[33m" : "")
+#define ANSI_COLOR_BLUE    (is_atty ? "\x1b[34m" : "")
+#define ANSI_COLOR_MAGENTA (is_atty ? "\x1b[35m" : "")
+#define ANSI_COLOR_CYAN    (is_atty ? "\x1b[36m" : "")
+#define ANSI_COLOR_RESET   (is_atty ? "\x1b[0m"  : "")
 
 #else
 
@@ -45,6 +46,8 @@
 
 #define CRLF "\r\n"
 #define MAXIMUM_SNAPLEN 262144
+
+bool is_atty = true;
 
 struct capture_config {
 #define IFNAMSIZ    16
@@ -166,19 +169,19 @@ std::ostream& operator<<(std::ostream& out, const custom_parser& parser) {
         << ANSI_COLOR_GREEN
         << parser.request_header
         << ANSI_COLOR_RESET;
-    if (is_plain_text(parser.request_body)) {
+    if (!is_atty || is_plain_text(parser.request_body)) {
         out << parser.request_body;
     } else {
-        out << ANSI_COLOR_RED "[binary request body]" ANSI_COLOR_RESET;
+        out << ANSI_COLOR_RED << "[binary request body]" << ANSI_COLOR_RESET;
     }
     out << std::endl
         << ANSI_COLOR_BLUE
         << parser.response_header
         << ANSI_COLOR_RESET;
-    if (is_plain_text(parser.response_body)) {
+    if (!is_atty || is_plain_text(parser.response_body)) {
         out << parser.response_body;
     } else {
-        out << ANSI_COLOR_RED "[binary response body]" ANSI_COLOR_RESET;
+        out << ANSI_COLOR_RED << "[binary response body]" << ANSI_COLOR_RESET;
     }
     return out;
 }
@@ -299,39 +302,7 @@ static bool process_tcp(struct packet_info *packet, const u_char *content, size_
     packet->src_addr.assign(buff);
     std::snprintf(buff, 128, "%s:%d", packet->dst_addr.c_str(), dst_port);
     packet->dst_addr.assign(buff);
-
     packet->is_fin = !!(tcp_header->th_flags & TH_FIN);
-    /*
-    std::cout<<"( " ANSI_COLOR_CYAN;
-    if (tcp_header->th_flags & TH_FIN) {
-        std::cout<<"FIN ";
-    }
-    if (tcp_header->th_flags & TH_SYN) {
-        std::cout<<"SYN ";
-    }
-    if (tcp_header->th_flags & TH_RST) {
-        std::cout<<"RST ";
-    }
-    if (tcp_header->th_flags & TH_PUSH) {
-        std::cout<<"PUSH ";
-    }
-    if (tcp_header->th_flags & TH_ACK) {
-        std::cout<<"ACK ";
-    }
-    if (tcp_header->th_flags & TH_URG) {
-        std::cout<<"URG ";
-    }
-    if (tcp_header->th_flags & TH_ECE) {
-        std::cout<<"ECE ";
-    }
-    if (tcp_header->th_flags & TH_CWR) {
-        std::cout<<"CWR ";
-    }
-    std::cout<<ANSI_COLOR_RESET " Ack=" << tcp_header->th_ack << " Seq=" << tcp_header->th_seq << std::endl;
-    std::string time_str = timeval2tr(&header->ts);
-    std::cout<<"Time: " ANSI_COLOR_BLUE << time_str << ANSI_COLOR_RESET " Ip: "
-        << packet->src_addr << " -> " << packet->dst_addr << " Join: " << packet->join_addr << std::endl;
-    */
 
     content += tcp_header_len;
     packet->body = std::string(reinterpret_cast<const char *>(content), len - tcp_header_len);
@@ -496,14 +467,14 @@ int custom_parser::on_message_complete(http_parser *parser) {
         if (gzip_decompress(self->response_body, new_body)) {
             self->response_body = new_body;
         } else {
-            std::cerr << ANSI_COLOR_RED "uncompress error" ANSI_COLOR_RESET << std::endl;
+            std::cerr << ANSI_COLOR_RED << "uncompress error" << ANSI_COLOR_RESET << std::endl;
         }
     }
     return 0;
 }
 
 void custom_parser::save_http_request(const capture_config *conf, const std::string &join_addr) {
-    std::cout << ANSI_COLOR_CYAN << request_address << "->" << response_address << " " << host << " " << url << ANSI_COLOR_RESET << std::endl;
+    std::cout << ANSI_COLOR_CYAN << request_address << " -> " << response_address << " " << host << " " << url << ANSI_COLOR_RESET << std::endl;
     if (!conf->output_path.empty()) {
         std::string save_filename = conf->output_path + "/" + host;
         std::ofstream out(save_filename.c_str(), std::ios::app | std::ios::out);
@@ -569,8 +540,8 @@ void process_packet(const capture_config *conf, const u_char* data, size_t len) 
                         (*it)->parse(packet.body, HTTP_RESPONSE);
                         break;
                     } else {
-                        std::cerr << ANSI_COLOR_RED "get response exception, body [" << packet.body
-                                  << "]" ANSI_COLOR_RESET << std::endl;
+                        std::cerr << ANSI_COLOR_RED << "get response exception, body [" << packet.body
+                                  << "]" << ANSI_COLOR_RESET << std::endl;
                     }
                 }
             }
@@ -619,10 +590,8 @@ static const struct option longopts[] = {
 
 #define SHORTOPTS "hi:f:r:s:w:x"
 
-extern char pcap_version[];
-
 int print_usage() {
-    std::cerr << "libpcap version " << pcap_version << "\n"
+    std::cerr << "libpcap version " << pcap_lib_version() << "\n"
               << "httpflow version " HTTPFLOW_VERSION "\n"
               << "\n"
               << "Usage: httpflow [-i interface] [-f filter] [-r pcap-file] [-s snapshot-length] [-w output-path] [-x pipe-line]"
@@ -902,6 +871,8 @@ int datalink2off(int dl_id)
 }
 
 int main(int argc, char **argv) {
+
+    is_atty = isatty(fileno(stdout));
 
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t *handle = NULL;
