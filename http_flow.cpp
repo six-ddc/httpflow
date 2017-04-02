@@ -209,7 +209,7 @@ static std::string timeval2tr(const struct timeval *ts) {
     struct tm *local_tm = localtime(&ts->tv_sec);
     std::string time_str;
     time_str.resize(15);
-    sprintf(&time_str[0], "%02d:%02d:%02d.%06d", local_tm->tm_hour, local_tm->tm_min, local_tm->tm_sec, ts->tv_usec);
+    sprintf(&time_str[0], "%02d:%02d:%02d.%06d", local_tm->tm_hour, local_tm->tm_min, local_tm->tm_sec, (int)ts->tv_usec);
     return time_str;
 }
 
