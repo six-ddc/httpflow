@@ -600,7 +600,7 @@ int print_usage() {
               << "  -f filter       Selects which packets will be dumped" << "\n" 
               << "                  If filter expression is given, only packets for which expression is 'true' will be dumped" << "\n"
               << "                  For the expression syntax, see pcap-filter(7)" << "\n"
-              << "  -w output-path  Write the http request and response to directory" << "\n"
+              << "  -w output-path  Write the http request and response to a specific directory" << "\n"
               << "\n"
               << "  For more information, see https://github.com/six-ddc/httpflow" << "\n\n";
     exit(0);

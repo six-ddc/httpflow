@@ -40,11 +40,21 @@ or directly download [Release](https://github.com/six-ddc/httpflow/releases) bin
 
 ```bash
 > httpflow -h
+libpcap version libpcap version 1.8.1 -- Apple version 67.60.1
+httpflow version 0.0.4
 
-libpcap version 1.3.0
-httpflow 0.0.1
+Usage: httpflow [-i interface | -r pcap-file] [-f filter] [-w output-path]
 
-Usage: httpflow [-i interface] [-f filter] [-r pcap-file] [-w output-path] [-x pipe-line] [-s snapshot-length]
+  -i interface    Listen on interface
+  -r pcap-file    Read packets from file (which was created by tcpdump with the -w option)
+                  Standard input is used if file is '-'
+  -f filter       Selects which packets will be dumped
+                  If filter expression is given, only packets for which expression is 'true' will be dumped
+                  For the expression syntax, see pcap-filter(7)
+  -w output-path  Write the http request and response to a specific directory
+
+  For more information, see https://github.com/six-ddc/httpflow
+
 ```
 
 * Capture default interface
