@@ -77,5 +77,5 @@ Usage: httpflow [-i interface] [-f filter] [-r pcap-file] [-w output-path] [-x p
 * Read packets from input
 
 ```bash
-# tcpdump -w - | httpflow -r -
+> tcpdump -w - | httpflow -r -
 ```
