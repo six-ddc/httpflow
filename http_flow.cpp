@@ -18,7 +18,7 @@
 #include <unistd.h>
 #include "http_parser.h"
 
-#define HTTPFLOW_VERSION "0.0.2"
+#define HTTPFLOW_VERSION "0.0.4"
 
 #define USE_ANSI_COLOR
 
@@ -55,7 +55,6 @@ struct capture_config {
     std::string output_path;
     char device[IFNAMSIZ];
     std::string file_name;
-    bool pipe_line;
     std::string filter;
     int datalink_size;
 };
@@ -584,18 +583,26 @@ static const struct option longopts[] = {
         {"pcap-file",       required_argument, NULL, 'r'},
         {"snapshot-length", required_argument, NULL, 's'},
         {"output-path",     required_argument, NULL, 'w'},
-        {"pipe-line",       no_argument,       NULL, 'x'},
         {NULL, 0,                              NULL, 0}
 };
 
-#define SHORTOPTS "hi:f:r:s:w:x"
+#define SHORTOPTS "hi:f:r:w:"
 
 int print_usage() {
     std::cerr << "libpcap version " << pcap_lib_version() << "\n"
               << "httpflow version " HTTPFLOW_VERSION "\n"
               << "\n"
-              << "Usage: httpflow [-i interface] [-f filter] [-r pcap-file] [-s snapshot-length] [-w output-path] [-x pipe-line]"
-              << "\n";
+              << "Usage: httpflow [-i interface | -r pcap-file] [-f filter] [-w output-path]" << "\n"
+              << "\n"
+              << "  -i interface    Listen on interface" << "\n"
+              << "  -r pcap-file    Read packets from file (which was created by tcpdump with the -w option)" << "\n"
+              << "                  Standard input is used if file is '-'" << "\n"
+              << "  -f filter       Selects which packets will be dumped" << "\n" 
+              << "                  If filter expression is given, only packets for which expression is 'true' will be dumped" << "\n"
+              << "                  For the expression syntax, see pcap-filter(7)" << "\n"
+              << "  -w output-path  Write the http request and response to directory" << "\n"
+              << "\n"
+              << "  For more information, see https://github.com/six-ddc/httpflow" << "\n\n";
     exit(0);
 }
 
@@ -608,7 +615,6 @@ capture_config *default_config() {
     conf->snaplen = MAXIMUM_SNAPLEN;
     conf->device[0] = 0;
     conf->filter = "tcp";
-    conf->pipe_line = false;
 
     return conf;
 }
@@ -630,20 +636,11 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
             case 'r':
                 conf->file_name = optarg;
                 break;
-            case 's':
-                conf->snaplen = atoi(optarg);
-                if (conf->snaplen == 0) {
-                    conf->snaplen = MAXIMUM_SNAPLEN;
-                }
-                break;
             case 'h':
                 print_usage();
                 break;
             case 'w':
                 conf->output_path = optarg;
-                break;
-            case 'x':
-                conf->pipe_line = true;
                 break;
             default:
                 exit(1);
@@ -668,12 +665,12 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
 
     if (conf->file_name.empty()) {
         std::cerr << "interface: " << conf->device << std::endl;
-        std::cerr << "snapshot-length: " << conf->snaplen << std::endl;
     } else {
-        std::cerr << "pcap-file: " << conf->file_name << std::endl;
-    }
-    if (conf->pipe_line) {
-        std::cerr << "pipe_line: " << (conf->pipe_line ? "true" : "false") << std::endl;
+        if (conf->file_name == "-") {
+            std::cerr << "pcap-file: [stdin]" << std::endl;
+        } else {
+            std::cerr << "pcap-file: " << conf->file_name << std::endl;
+        }
     }
     if (!conf->output_path.empty()) {
         std::cerr << "output_path: " << conf->output_path << std::endl;
@@ -886,13 +883,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (cap_conf->pipe_line) {
-        handle = pcap_fopen_offline(stdin, errbuf);
-        if (!handle) {
-            std::cerr << "pcap_fopen_offline(): " << errbuf << std::endl;
-            return 1;
-        }
-    } else if (!cap_conf->file_name.empty()) {
+    if (!cap_conf->file_name.empty()) {
         handle = pcap_open_offline(cap_conf->file_name.c_str(), errbuf);
         if (!handle) {
             std::cerr << "pcap_open_offline(): " << errbuf << std::endl;
