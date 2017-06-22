@@ -39,19 +39,19 @@ or directly download [Release](https://github.com/six-ddc/httpflow/releases) bin
 ## Usage
 
 ```bash
-> httpflow -h
 libpcap version libpcap version 1.8.1 -- Apple version 67.60.1
-httpflow version 0.0.4
+httpflow version 0.0.5
 
-Usage: httpflow [-i interface | -r pcap-file] [-f filter] [-w output-path]
+Usage: httpflow [-i interface | -r pcap-file] [-f packet-filter] [-u url-filter] [-w output-path]
 
-  -i interface    Listen on interface
-  -r pcap-file    Read packets from file (which was created by tcpdump with the -w option)
-                  Standard input is used if file is '-'
-  -f filter       Selects which packets will be dumped
-                  If filter expression is given, only packets for which expression is 'true' will be dumped
-                  For the expression syntax, see pcap-filter(7)
-  -w output-path  Write the http request and response to a specific directory
+  -i interface      Listen on interface
+  -r pcap-file      Read packets from file (which was created by tcpdump with the -w option)
+                    Standard input is used if file is '-'
+  -f packet-filter  Selects which packets will be dumped
+                    If filter expression is given, only packets for which expression is 'true' will be dumped
+                    For the expression syntax, see pcap-filter(7)
+  -u url-filter     Matches which urls will be dumped
+  -w output-path    Write the http request and response to a specific directory
 
   For more information, see https://github.com/six-ddc/httpflow
 
@@ -75,6 +75,11 @@ Usage: httpflow [-i interface | -r pcap-file] [-f filter] [-w output-path]
 # If no expression is given, all packets on the net will be dumped.
 # For the expression syntax, see pcap-filter(7).
 > httpflow -f 'tcp port 80 and host baidu.com'
+```
+
+* Use the regexp to filter request urls
+```bash
+> httpflow -u '(google.com|httpbin.org)/.*/get'
 ```
 
 * Read packets from file

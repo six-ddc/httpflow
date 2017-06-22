@@ -1,4 +1,5 @@
 #include "data_link.h"
+#include <pcap.h>
 
 int datalink2off(int dl_id)
 {
