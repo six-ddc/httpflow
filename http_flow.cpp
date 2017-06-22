@@ -27,7 +27,7 @@ struct capture_config {
     char device[IFNAMSIZ];
     std::string file_name;
     std::string filter;
-    std::string url_filter;
+    std::regex* url_filter;
     int datalink_size;
 };
 
@@ -137,7 +137,7 @@ struct ether_header {
     u_short ether_type;
 };
 
-void process_packet(const std::string &url_filter, const std::string &output_path, const u_char* data, size_t len) {
+void process_packet(const std::regex *url_filter, const std::string &output_path, const u_char* data, size_t len) {
 
     struct packet_info packet;
     bool ret = process_ipv4(&packet, data, len);
@@ -272,6 +272,7 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
     // pcap_if_t *devices = NULL, *iter = NULL;
     const char *default_device = NULL;
     int cnt, op, i;
+    std::string url_regex;
 
     while ((op = getopt_long(argc, argv, SHORTOPTS, longopts, NULL)) != -1) {
         switch (op) {
@@ -282,7 +283,14 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
                 conf->filter = optarg;
                 break;
             case 'u':
-                conf->url_filter = optarg;
+                try {
+                    url_regex.assign(optarg);
+                    conf->url_filter = new std::regex(url_regex);
+                } catch (const std::regex_error& e) {
+                    std::cerr << "invalid regular expression (" << url_regex << "): " << e.what() << std::endl;
+                    exit(1);
+                }
+
                 break;
             case 'r':
                 conf->file_name = optarg;
@@ -303,15 +311,6 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
         default_device = pcap_lookupdev(errbuf);
         if (default_device) {
             std::strncpy(conf->device, default_device, sizeof(conf->device));
-        }
-    }
-
-    if (!conf->url_filter.empty()) {
-        try {
-            std::regex re(conf->url_filter);
-        } catch (const std::regex_error& e) {
-            std::cerr << "invalid regular expression (" << conf->url_filter << "): " << e.what() << std::endl;
-            exit(1);
         }
     }
 
@@ -336,8 +335,8 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
         std::cerr << "output_path: " << conf->output_path << std::endl;
     }
     std::cerr << "filter: " << conf->filter << std::endl;
-    if (!conf->url_filter.empty()) {
-        std::cerr << "url_filter: " << conf->url_filter << std::endl;
+    if (!url_regex.empty()) {
+        std::cerr << "url_filter: " << url_regex << std::endl;
     }
 
     return 0;

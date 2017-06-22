@@ -113,15 +113,11 @@ int custom_parser::on_message_complete(http_parser *parser) {
     return 0;
 }
 
-bool custom_parser::filter_url(const std::string &url_filter, const std::string &url) {
-    if(!url_filter.empty()) {
-        std::regex url_regex(url_filter);
-        return std::regex_search(url, url_regex);
-    }
-    return true;
+bool custom_parser::filter_url(const std::regex *url_filter, const std::string &url) {
+    return !url_filter ? true : std::regex_search(url, *url_filter);
 }
 
-void custom_parser::save_http_request(const std::string &url_filter, const std::string &output_path, const std::string &join_addr) {
+void custom_parser::save_http_request(const std::regex *url_filter, const std::string &output_path, const std::string &join_addr) {
     std::string host_with_url = host + url;
     if (!filter_url(url_filter, host_with_url)) {
         return;
