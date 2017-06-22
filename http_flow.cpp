@@ -1,53 +1,23 @@
 #include <stdio.h>
 #include <pcap.h>
 #include <arpa/inet.h>
-#include <memory.h>
 #include <stdlib.h>
 #include <getopt.h>
 #include <errno.h>
-#include <iostream>
-#include <fstream>
 #include <string>
-#include <cstring>
 #include <sstream>
 #include <list>
 #include <map>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <zlib.h>
 #include <unistd.h>
-#include "http_parser.h"
+#include "util.h"
+#include "custom_parser.h"
+#include "data_link.h"
 
-#define HTTPFLOW_VERSION "0.0.4"
+#define HTTPFLOW_VERSION "0.0.5"
 
-#define USE_ANSI_COLOR
-
-#ifdef USE_ANSI_COLOR
-
-#define ANSI_COLOR_RED     (is_atty ? "\x1b[31m" : "")
-#define ANSI_COLOR_GREEN   (is_atty ? "\x1b[32m" : "")
-#define ANSI_COLOR_YELLOW  (is_atty ? "\x1b[33m" : "")
-#define ANSI_COLOR_BLUE    (is_atty ? "\x1b[34m" : "")
-#define ANSI_COLOR_MAGENTA (is_atty ? "\x1b[35m" : "")
-#define ANSI_COLOR_CYAN    (is_atty ? "\x1b[36m" : "")
-#define ANSI_COLOR_RESET   (is_atty ? "\x1b[0m"  : "")
-
-#else
-
-#define ANSI_COLOR_RED     ""
-#define ANSI_COLOR_GREEN   ""
-#define ANSI_COLOR_YELLOW  ""
-#define ANSI_COLOR_BLUE    ""
-#define ANSI_COLOR_MAGENTA ""
-#define ANSI_COLOR_CYAN    ""
-#define ANSI_COLOR_RESET   ""
-
-#endif  // USE_ANSI_COLOR
-
-#define CRLF "\r\n"
 #define MAXIMUM_SNAPLEN 262144
-
-bool is_atty = true;
 
 struct capture_config {
 #define IFNAMSIZ    16
@@ -56,207 +26,11 @@ struct capture_config {
     char device[IFNAMSIZ];
     std::string file_name;
     std::string filter;
+    std::string url_filter;
     int datalink_size;
 };
 
-struct packet_info {
-    std::string src_addr;
-    std::string dst_addr;
-    bool        is_fin;
-    std::string body;
-};
-
-static bool is_plain_text(const std::string &s) {
-	// The algorithm works by dividing the set of bytecodes [0..255] into three
-	// categories:
-	// 	- The white list of textual bytecodes:
-	//  	9 (TAB), 10 (LF), 13 (CR), 32 (SPACE) to 255.
-	// 	- The gray list of tolerated bytecodes:
-	//  	7 (BEL), 8 (BS), 11 (VT), 12 (FF), 26 (SUB), 27 (ESC).
-	// 	- The black list of undesired, non-textual bytecodes:
-	//  	0 (NUL) to 6, 14 to 31.
-	// If a file contains at least one byte that belongs to the white list and
-	// no byte that belongs to the black list, then the file is categorized as
-	// plain text; otherwise, it is categorized as binary.  (The boundary case,
-	// when the file is empty, automatically falls into the latter category.)
-    if (s.empty()) {
-        return true;
-    }
-    size_t white_list_char_count = 0;
-	for (int i = 0; i < s.size(); ++i) {
-		const unsigned char c = s[i];
-        if (c == 9 || c == 10 || c == 13 || (c >= 32 && c <= 255)) {
-            // white list
-            white_list_char_count++;
-        } else if ((c <= 6) || (c >= 14 && c <= 31)) {
-            // black list
-            return 0;
-        }
-	}
-    return white_list_char_count >= 1 ? true : false;
-}
-
-class custom_parser {
-
-    friend std::ofstream& operator<<(std::ofstream& out, const custom_parser& f);
-    friend std::ostream& operator<<(std::ostream& out, const custom_parser& f);
-
-private:
-    http_parser parser;
-    http_parser_settings settings;
-
-    std::string method;
-    std::string url;
-
-    std::string request_address;
-    std::string response_address;
-
-    std::string request;
-    std::string request_header;
-    std::string request_body;
-
-    bool request_complete_flag;
-
-    std::string response;
-    std::string response_header;
-    std::string response_body;
-
-    bool response_complete_flag;
-
-    std::string temp_header_field;
-    bool gzip_flag;
-    std::string host;
-
-public:
-    custom_parser();
-
-    bool parse(const std::string &body, enum http_parser_type type);
-
-    std::string get_response_body() const;
-
-    inline bool is_response_complete() const {
-        return response_complete_flag;
-    }
-
-    inline bool is_request_complete() const {
-        return request_complete_flag;
-    }
-
-    inline bool is_request_address(const std::string &address) const {
-        return request_address == address;
-    }
-
-    void set_addr(const std::string &src_addr, const std::string &dst_addr);
-
-    void save_http_request(const capture_config *conf, const std::string &join_addr);
-
-    static int on_url(http_parser *parser, const char *at, size_t length);
-
-    static int on_header_field(http_parser *parser, const char *at, size_t length);
-
-    static int on_header_value(http_parser *parser, const char *at, size_t length);
-
-    static int on_headers_complete(http_parser *parser);
-
-    static int on_body(http_parser *parser, const char *at, size_t length);
-
-    static int on_message_complete(http_parser *parser);
-};
-
-std::ostream& operator<<(std::ostream& out, const custom_parser& parser) {
-    out
-        << ANSI_COLOR_GREEN
-        << parser.request_header
-        << ANSI_COLOR_RESET;
-    if (!is_atty || is_plain_text(parser.request_body)) {
-        out << parser.request_body;
-    } else {
-        out << ANSI_COLOR_RED << "[binary request body]" << ANSI_COLOR_RESET;
-    }
-    out << std::endl
-        << ANSI_COLOR_BLUE
-        << parser.response_header
-        << ANSI_COLOR_RESET;
-    if (!is_atty || is_plain_text(parser.response_body)) {
-        out << parser.response_body;
-    } else {
-        out << ANSI_COLOR_RED << "[binary response body]" << ANSI_COLOR_RESET;
-    }
-    return out;
-}
-
-std::ofstream& operator<<(std::ofstream& out, const custom_parser& parser) {
-    out
-        << parser.request_header
-        << parser.request_body
-        << parser.response_header
-        << parser.response_body;
-    return out;
-}
-
 std::map<std::string, std::list<custom_parser *> > http_requests;
-
-static void get_join_addr(const std::string &src_addr, const std::string &dst_addr, std::string &ret) {
-    if (src_addr < dst_addr) {
-        ret = src_addr + "-" + dst_addr;
-    } else {
-        ret = dst_addr + "-" + src_addr;
-    }
-}
-
-static std::string timeval2tr(const struct timeval *ts) {
-    struct tm *local_tm = localtime(&ts->tv_sec);
-    std::string time_str;
-    time_str.resize(15);
-    sprintf(&time_str[0], "%02d:%02d:%02d.%06d", local_tm->tm_hour, local_tm->tm_min, local_tm->tm_sec, (int)ts->tv_usec);
-    return time_str;
-}
-
-#define GZIP_CHUNK 16384
-
-static bool gzip_decompress(std::string &src, std::string &dst) {
-    z_stream zs;
-    memset(&zs, 0, sizeof(zs));
-
-    // gzip
-    if (inflateInit2(&zs, 16 + MAX_WBITS) != Z_OK) {
-        return false;
-    }
-
-    zs.next_in = reinterpret_cast<Bytef *>(&src[0]);
-    zs.avail_in = src.size();
-
-    int ret;
-    char outbuffer[GZIP_CHUNK];
-
-    do {
-        zs.next_out = reinterpret_cast<Bytef *>(outbuffer);
-        zs.avail_out = sizeof(outbuffer);
-        ret = inflate(&zs, 0);
-        if (dst.size() < zs.total_out) {
-            dst.append(outbuffer, zs.total_out - dst.size());
-        }
-    } while (ret == Z_OK);
-    inflateEnd(&zs);
-    return ret == Z_STREAM_END;
-}
-
-static std::string urlencode(const std::string &s) {
-    static const char lookup[] = "0123456789abcdef";
-    std::stringstream e;
-    for (int i = 0; i < s.size(); ++i) {
-        const char c = s[i];
-        if (('0' <= c && c <= '9') || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') ||
-            (c == '-' || c == '_' || c == '.' || c == '~')) {
-            e << c;
-        } else {
-            e << '%';
-            e << lookup[(c & 0xF0) >> 4];
-            e << lookup[(c & 0x0F)];
-        }
-    }
-    return e.str();
-}
 
 struct tcphdr {
     uint16_t th_sport;       /* source port */
@@ -362,136 +136,7 @@ struct ether_header {
     u_short ether_type;
 };
 
-custom_parser::custom_parser() {
-    request_complete_flag = false;
-    response_complete_flag = false;
-    gzip_flag = false;
-    http_parser_init(&parser, HTTP_REQUEST);
-    parser.data = this;
-
-    http_parser_settings_init(&settings);
-    settings.on_url = on_url;
-    settings.on_header_field = on_header_field;
-    settings.on_header_value = on_header_value;
-    settings.on_headers_complete = on_headers_complete;
-    settings.on_body = on_body;
-    settings.on_message_complete = on_message_complete;
-}
-
-bool custom_parser::parse(const std::string &body, enum http_parser_type type) {
-    if (parser.type != type) {
-        http_parser_init(&parser, type);
-    }
-    if (parser.type == HTTP_REQUEST) {
-        request.append(body);
-    } else if (parser.type == HTTP_RESPONSE) {
-        response.append(body);
-    }
-    size_t parse_bytes = http_parser_execute(&parser, &settings, body.c_str(), body.size());
-    return parse_bytes > 0 && HTTP_PARSER_ERRNO(&parser) == HPE_OK;
-}
-
-std::string custom_parser::get_response_body() const {
-    return response_body;
-}
-
-void custom_parser::set_addr(const std::string &src_addr, const std::string &dst_addr) {
-    this->request_address = src_addr;
-    this->response_address = dst_addr;
-}
-
-int custom_parser::on_url(http_parser *parser, const char *at, size_t length) {
-    custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
-    self->url.assign(at, length);
-    self->method.assign(http_method_str(static_cast<enum http_method>(parser->method)));
-    return 0;
-};
-
-int custom_parser::on_header_field(http_parser *parser, const char *at, size_t length) {
-    custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
-    self->temp_header_field.assign(at, length);
-    for (size_t i = 0; i < length; ++i) {
-        if (at[i] >= 'A' && at[i] <= 'Z') {
-            self->temp_header_field[i] = at[i] ^ (char) 0x20;
-        }
-    }
-    return 0;
-}
-
-int custom_parser::on_header_value(http_parser *parser, const char *at, size_t length) {
-    custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
-    if (parser->type == HTTP_RESPONSE) {
-        if (self->temp_header_field == "content-encoding" && std::strstr(at, "gzip")) {
-            self->gzip_flag = true;
-        }
-    } else {
-        if (self->temp_header_field == "host") {
-            self->host.assign(at, length);
-        }
-    }
-    // std::cout << self->temp_header_field <<  ":" << std::string(at, length) << std::endl;
-    return 0;
-}
-
-int custom_parser::on_headers_complete(http_parser *parser) {
-    custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
-    if (parser->type == HTTP_REQUEST) {
-        self->request_header = self->request.substr(0, parser->nread);
-    } else if (parser->type == HTTP_RESPONSE) {
-        self->response_header = self->response.substr(0, parser->nread);
-    }
-    return 0;
-}
-
-int custom_parser::on_body(http_parser *parser, const char *at, size_t length) {
-    custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
-    // std::cout << __func__ << " " << self->url << std::endl;
-    if (parser->type == HTTP_REQUEST) {
-        self->request_body.append(at, length);
-    } else if (parser->type == HTTP_RESPONSE) {
-        self->response_body.append(at, length);
-    }
-    return 0;
-}
-
-int custom_parser::on_message_complete(http_parser *parser) {
-    custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
-    if (parser->type == HTTP_REQUEST) {
-        self->request_complete_flag = true;
-    } else if (parser->type == HTTP_RESPONSE) {
-        self->response_complete_flag = true;
-    }
-    if (self->gzip_flag) {
-        std::string new_body;
-        if (gzip_decompress(self->response_body, new_body)) {
-            self->response_body = new_body;
-        } else {
-            std::cerr << ANSI_COLOR_RED << "uncompress error" << ANSI_COLOR_RESET << std::endl;
-        }
-    }
-    return 0;
-}
-
-void custom_parser::save_http_request(const capture_config *conf, const std::string &join_addr) {
-    std::cout << ANSI_COLOR_CYAN << request_address << " -> " << response_address << " " << host << " " << url << ANSI_COLOR_RESET << std::endl;
-    if (!conf->output_path.empty()) {
-        std::string save_filename = conf->output_path + "/" + host;
-        std::ofstream out(save_filename.c_str(), std::ios::app | std::ios::out);
-        if (out.is_open()) {
-            out << *this << std::endl;
-            out.close();
-        } else {
-            std::cerr << "ofstream [" << save_filename << "] is not opened." << std::endl;
-            out.close();
-            exit(1);
-        }
-    } else {
-        std::cout << *this << std::endl;
-    }
-}
-
-
-void process_packet(const capture_config *conf, const u_char* data, size_t len) {
+void process_packet(const std::string &url_filter, const std::string &output_path, const u_char* data, size_t len) {
 
     struct packet_info packet;
     bool ret = process_ipv4(&packet, data, len);
@@ -548,7 +193,7 @@ void process_packet(const capture_config *conf, const u_char* data, size_t len) 
 
         for (std::list<custom_parser *>::iterator it = parser_list.begin(); it != parser_list.end();) {
             if ((*it)->is_response_complete() || packet.is_fin) {
-                (*it)->save_http_request(conf, join_addr);
+                (*it)->save_http_request(url_filter, output_path, join_addr);
                 delete (*it);
                 it = iter->second.erase(it);
             } else {
@@ -563,7 +208,7 @@ void process_packet(const capture_config *conf, const u_char* data, size_t len) 
 }
 
 void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *content) {
- 
+
     // Data: |       Mac         |        Ip          |           TCP                  |
     // Len : |   ETHER_HDR_LEN   |   ip_header->ip_hl << 2   | tcp_header->th_off << 2 + sizeof body |
 
@@ -573,33 +218,35 @@ void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *
     content += conf->datalink_size;
     size_t len = header->caplen - conf->datalink_size;
 
-    return process_packet(conf, content, len);
+    return process_packet(conf->url_filter, conf->output_path, content, len);
 }
 
 static const struct option longopts[] = {
         {"help",            no_argument,       NULL, 'h'},
         {"interface",       required_argument, NULL, 'i'},
         {"filter",          required_argument, NULL, 'f'},
+        {"url_filter",      required_argument, NULL, 'u'},
         {"pcap-file",       required_argument, NULL, 'r'},
         {"snapshot-length", required_argument, NULL, 's'},
         {"output-path",     required_argument, NULL, 'w'},
         {NULL, 0,                              NULL, 0}
 };
 
-#define SHORTOPTS "hi:f:r:w:"
+#define SHORTOPTS "hi:f:u:r:w:"
 
 int print_usage() {
     std::cerr << "libpcap version " << pcap_lib_version() << "\n"
               << "httpflow version " HTTPFLOW_VERSION "\n"
               << "\n"
-              << "Usage: httpflow [-i interface | -r pcap-file] [-f filter] [-w output-path]" << "\n"
+              << "Usage: httpflow [-i interface | -r pcap-file] [-f filter] [-u url_regexp] [-w output-path]" << "\n"
               << "\n"
               << "  -i interface    Listen on interface" << "\n"
               << "  -r pcap-file    Read packets from file (which was created by tcpdump with the -w option)" << "\n"
               << "                  Standard input is used if file is '-'" << "\n"
-              << "  -f filter       Selects which packets will be dumped" << "\n" 
+              << "  -f filter       Selects which packets will be dumped" << "\n"
               << "                  If filter expression is given, only packets for which expression is 'true' will be dumped" << "\n"
               << "                  For the expression syntax, see pcap-filter(7)" << "\n"
+              << "  -u url_regexp   Matches which urls will be dumped" << "\n"
               << "  -w output-path  Write the http request and response to a specific directory" << "\n"
               << "\n"
               << "  For more information, see https://github.com/six-ddc/httpflow" << "\n\n";
@@ -632,6 +279,9 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
                 break;
             case 'f':
                 conf->filter = optarg;
+                break;
+            case 'u':
+                conf->url_filter = optarg;
                 break;
             case 'r':
                 conf->file_name = optarg;
@@ -676,195 +326,11 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
         std::cerr << "output_path: " << conf->output_path << std::endl;
     }
     std::cerr << "filter: " << conf->filter << std::endl;
+    if (!conf->url_filter.empty()) {
+        std::cerr << "url_filter: " << conf->url_filter << std::endl;
+    }
 
     return 0;
-}
-
-std::string datalink2str(int dl_id)
-{
-	char str[128];
-
-	switch(dl_id) {
-#ifdef DLT_NULL
-	case DLT_NULL:
-		strcpy(str, "DLT_NULL");
-		break;
-#endif
-#ifdef DLT_EN10MB
-	case DLT_EN10MB:
-		strcpy(str, "DLT_EN10MB");
-		break;
-#endif
-#ifdef DLT_IEEE802
-	case DLT_IEEE802:
-		strcpy(str, "DLT_IEEE802");
-		break;
-#endif
-#ifdef DLT_ARCNET
-	case DLT_ARCNET:
-		strcpy(str, "DLT_ARCNET");
-		break;
-#endif
-#ifdef DLT_FDDI
-	case DLT_FDDI:
-		strcpy(str, "DLT_FDDI");
-		break;
-#endif
-#ifdef DLT_ATM_RFC1483
-	case DLT_ATM_RFC1483:
-		strcpy(str, "DLT_ATM_RFC1483");
-		break;
-#endif
-#ifdef DLT_RAW  
-	case DLT_RAW:  
-		strcpy(str, "DLT_RAW"); 
-		break; 
-#endif
-#ifdef DLT_PPP_SERIAL
-	case DLT_PPP_SERIAL:
-		strcpy(str, "DLT_PPP_SERIAL");
-		break;
-#endif
-#ifdef DLT_PPP_ETHER
-	case DLT_PPP_ETHER:
-		strcpy(str, "DLT_PPP_ETHER");
-		break;
-#endif
-#ifdef DLT_C_HDLC
-	case DLT_C_HDLC:
-		strcpy(str, "DLT_C_HDLC");
-		break;
-#endif
-#ifdef DLT_IEEE802_11
-	case DLT_IEEE802_11:
-		strcpy(str, "DLT_IEEE802_11");
-		break;
-#endif
-#ifdef DLT_LOOP
-	case DLT_LOOP:
-		strcpy(str, "DLT_LOOP");
-		break;
-#endif
-#ifdef DLT_LINUX_SLL
-	case DLT_LINUX_SLL:
-		strcpy(str, "DLT_LINUX_SLL");
-		break;
-#endif
-#ifdef DLT_LTALK
-	case DLT_LTALK:
-		strcpy(str, "DLT_LTALK");
-		break;
-#endif
-#ifdef DLT_PFLOG
-	case DLT_PFLOG:
-		strcpy(str, "DLT_PFLOG");
-		break;
-#endif
-#ifdef DLT_PPP
-	case DLT_PPP:
-		strcpy(str, "DLT_PPP");
-		break;
-#endif 
-#ifdef DLT_SLIP
-	case DLT_SLIP:
-		strcpy(str, "DLT_SLIP");
-		break;
-#endif
-#ifdef DLT_SLIP_BSDOS
-	case DLT_SLIP_BSDOS:
-		strcpy(str, "DLT_SLIP_BSDOS");
-		break;
-#endif
-#ifdef DLT_PPP_BSDOS
-	case DLT_PPP_BSDOS:
-		strcpy(str, "DLT_PPP_BSDOS");
-		break;
-#endif
-
-	default:
-		sprintf(str, "UNKNOWN(0x%x)(%d)" , dl_id , dl_id);
-		break;
-
-	}
-	return std::string(str);
-}
-
-int datalink2off(int dl_id)
-{
-	int dl_size = 0;
-	switch(dl_id) {
-
-#ifdef DLT_NULL /* not tested */
-	case DLT_NULL:
-		dl_size = 4;
-		break;
-#endif
-#ifdef DLT_EN10MB
-	case DLT_EN10MB:
-		dl_size = 14;
-		break;
-#endif
-#ifdef DLT_RAW
-	case DLT_RAW:
-		dl_size = 0;
-		break;
-#endif
-#ifdef DLT_IEEE802_11 /* not tested */
-	case DLT_IEEE802_11:
-		dl_size = 24;
-		break;
-#endif
-#ifdef DLT_LOOP /* not tested */
-	case DLT_LOOP:
-		dl_size = 4;
-		break;
-#endif
-#ifdef DLT_PPP_ETHER
-	case DLT_PPP_ETHER:
-		dl_size = 8; 
-		break;
-#endif
-#ifdef DLT_LINUX_SLL
-	case DLT_LINUX_SLL:
-		dl_size = 16; 
-		break;
-#endif
-#ifdef DLT_PFLOG 
-	case DLT_PFLOG:
-		dl_size = 48;
-		break;
-#endif
-
-/* credits for DLT_PPP, DLT_SLIP, DLT_SLIP_BSDOS
-   and DLT_PPP_BSDOS offsets:
-   SNiFf v0.3 by uLiX
-   http://www.s0ftpj.org/bfi/online/bfi10/BFi10-05.html
-*/
-#ifdef DLT_PPP
-	case DLT_PPP:
-		dl_size = 4;
-		break;
-#endif
-#ifdef DLT_SLIP
-	case DLT_SLIP:
-		dl_size = 16;
-		break;
-#endif
-#ifdef DLT_SLIP_BSDOS
-	case DLT_SLIP_BSDOS:
-		dl_size = 24;
-		break;
-#endif
-#ifdef DLT_PPP_BSDOS
-	case DLT_PPP_BSDOS:
-		dl_size = 24;
-		break;
-#endif
-
-	default:
-		break;
-	}
-	return dl_size;
 }
 
 int main(int argc, char **argv) {
