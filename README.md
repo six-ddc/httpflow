@@ -38,7 +38,7 @@ or directly download [Release](https://github.com/six-ddc/httpflow/releases) bin
 
 ## Usage
 
-```bash
+```
 libpcap version libpcap version 1.8.1 -- Apple version 67.60.1
 httpflow version 0.0.5
 
