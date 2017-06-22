@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <regex>
 #include "util.h"
 #include "custom_parser.h"
 #include "data_link.h"
@@ -302,6 +303,15 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
         default_device = pcap_lookupdev(errbuf);
         if (default_device) {
             std::strncpy(conf->device, default_device, sizeof(conf->device));
+        }
+    }
+
+    if (!conf->url_filter.empty()) {
+        try {
+            std::regex re(conf->url_filter);
+        } catch (const std::regex_error& e) {
+            std::cerr << "invalid regular expression (" << conf->url_filter << "): " << e.what() << std::endl;
+            exit(1);
         }
     }
 
