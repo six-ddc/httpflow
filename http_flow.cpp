@@ -76,7 +76,7 @@ static bool process_tcp(struct packet_info *packet, const u_char *content, size_
     packet->src_addr.assign(buff);
     std::snprintf(buff, 128, "%s:%d", packet->dst_addr.c_str(), dst_port);
     packet->dst_addr.assign(buff);
-    packet->is_fin = !!(tcp_header->th_flags & TH_FIN);
+    packet->is_fin = !!(tcp_header->th_flags & (TH_FIN | TH_RST));
 
     content += tcp_header_len;
     packet->body = std::string(reinterpret_cast<const char *>(content), len - tcp_header_len);
@@ -396,7 +396,7 @@ int main(int argc, char **argv) {
 	datalink_id = pcap_datalink(handle);
 	datalink_str = datalink2str(datalink_id);
 	cap_conf->datalink_size = datalink2off(datalink_id);
-    std::cerr << "datalink: " << datalink_str << " header size: " << cap_conf->datalink_size << std::endl;
+    std::cerr << "datalink: " << datalink_id << "(" << datalink_str << ") header size: " << cap_conf->datalink_size << std::endl;
 
     if (-1 == pcap_loop(handle, -1, pcap_callback, reinterpret_cast<u_char *>(cap_conf))) {
         std::cerr << "pcap_loop(): " << pcap_geterr(handle) << std::endl;

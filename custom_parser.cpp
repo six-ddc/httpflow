@@ -107,7 +107,7 @@ int custom_parser::on_message_complete(http_parser *parser) {
         if (gzip_decompress(self->response_body, new_body)) {
             self->response_body = new_body;
         } else {
-            std::cerr << ANSI_COLOR_RED << "uncompress error" << ANSI_COLOR_RESET << std::endl;
+            std::cerr << ANSI_COLOR_RED << "[decompress error]" << ANSI_COLOR_RESET << std::endl;
         }
     }
     return 0;
@@ -153,7 +153,9 @@ std::ostream& operator<<(std::ostream& out, const custom_parser& parser) {
         << ANSI_COLOR_BLUE
         << parser.response_header
         << ANSI_COLOR_RESET;
-    if (!is_atty || is_plain_text(parser.response_body)) {
+    if (parser.response_body.empty()) {
+        out << ANSI_COLOR_RED << "[empty response body]" << ANSI_COLOR_RESET;
+    } else if (!is_atty || is_plain_text(parser.response_body)) {
         out << parser.response_body;
     } else {
         out << ANSI_COLOR_RED << "[binary response body]" << ANSI_COLOR_RESET;
