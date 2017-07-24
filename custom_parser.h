@@ -4,7 +4,7 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <regex>
+#include <pcre.h>
 #include "http_parser.h"
 
 class custom_parser {
@@ -59,9 +59,9 @@ public:
 
     void set_addr(const std::string &src_addr, const std::string &dst_addr);
 
-    bool filter_url(const std::regex *url_filter, const std::string &url);
+    bool filter_url(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &url);
 
-    void save_http_request(const std::regex *url_filter, const std::string &output_path, const std::string &join_addr);
+    void save_http_request(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &output_path, const std::string &join_addr);
 
     static int on_url(http_parser *parser, const char *at, size_t length);
 

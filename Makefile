@@ -1,8 +1,8 @@
 
 default: all
 
-CXXFLAGS=-O2 -std=c++11
-LIBS=-lz -lpcap
+CXXFLAGS=-O2 -I/usr/local/include
+LIBS=-lz -lpcap -lpcre
 
 PREFIX?=/usr/local
 INSTALL_BIN=$(PREFIX)/bin

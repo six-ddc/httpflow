@@ -3,6 +3,7 @@
 
 #include <memory.h>
 #include <cstring>
+#include <cstdio>
 #include <sstream>
 #include <zlib.h>
 

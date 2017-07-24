@@ -15,16 +15,16 @@ brew install httpflow
 
 ### Linux
 
-* Install [zlib](http://www.zlib.net/), [libpcap](http://www.tcpdump.org/)
+* Install [zlib](http://www.zlib.net/), [pcap](http://www.tcpdump.org/), [pcre](http://pcre.org/)
 
 ```bash
 ## On CentOS
 yum update
-yum install libpcap-devel zlib-devel
+yum install libpcap-devel zlib-devel pcre-devel
 
 ## On Ubuntu / Debian
 apt-get update
-apt-get install libpcap-dev zlib1g-dev
+apt-get install libpcap-dev zlib1g-dev libpcre3 libpcre3-dev
 ```
 
 * Building httpflow
@@ -78,6 +78,7 @@ Usage: httpflow [-i interface | -r pcap-file] [-f packet-filter] [-u url-filter]
 ```
 
 * Use the regexp to filter request urls
+
 ```bash
 > httpflow -u '(google.com|httpbin.org)/.*/get'
 ```

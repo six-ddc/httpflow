@@ -1,5 +1,3 @@
-#include <regex>
-
 #include "custom_parser.h"
 #include "util.h"
 
@@ -113,13 +111,16 @@ int custom_parser::on_message_complete(http_parser *parser) {
     return 0;
 }
 
-bool custom_parser::filter_url(const std::regex *url_filter, const std::string &url) {
-    return !url_filter ? true : std::regex_search(url, *url_filter);
+bool custom_parser::filter_url(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &url) {
+    if (!url_filter_re) return true;
+    int ovector[30];
+    int rc = pcre_exec(url_filter_re, url_filter_extra, url.c_str(), url.size(), 0, 0, ovector, 30);
+    return rc >= 0;
 }
 
-void custom_parser::save_http_request(const std::regex *url_filter, const std::string &output_path, const std::string &join_addr) {
+void custom_parser::save_http_request(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &output_path, const std::string &join_addr) {
     std::string host_with_url = host + url;
-    if (!filter_url(url_filter, host_with_url)) {
+    if (!filter_url(url_filter_re, url_filter_extra, host_with_url)) {
         return;
     }
     std::cout << ANSI_COLOR_CYAN << request_address << " -> " << response_address << " " << host_with_url << ANSI_COLOR_RESET << std::endl;

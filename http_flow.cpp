@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <pcap.h>
+#include <pcre.h>
 #include <arpa/inet.h>
 #include <stdlib.h>
 #include <getopt.h>
@@ -11,7 +12,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <regex>
 #include "util.h"
 #include "custom_parser.h"
 #include "data_link.h"
@@ -27,7 +27,8 @@ struct capture_config {
     char device[IFNAMSIZ];
     std::string file_name;
     std::string filter;
-    std::regex* url_filter;
+    pcre* url_filter_re;
+    pcre_extra* url_filter_extra;
     int datalink_size;
 };
 
@@ -137,7 +138,7 @@ struct ether_header {
     u_short ether_type;
 };
 
-void process_packet(const std::regex *url_filter, const std::string &output_path, const u_char* data, size_t len) {
+void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &output_path, const u_char* data, size_t len) {
 
     struct packet_info packet;
     bool ret = process_ipv4(&packet, data, len);
@@ -194,7 +195,7 @@ void process_packet(const std::regex *url_filter, const std::string &output_path
 
         for (std::list<custom_parser *>::iterator it = parser_list.begin(); it != parser_list.end();) {
             if ((*it)->is_response_complete() || packet.is_fin) {
-                (*it)->save_http_request(url_filter, output_path, join_addr);
+                (*it)->save_http_request(url_filter_re, url_filter_extra, output_path, join_addr);
                 delete (*it);
                 it = iter->second.erase(it);
             } else {
@@ -219,7 +220,7 @@ void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *
     content += conf->datalink_size;
     size_t len = header->caplen - conf->datalink_size;
 
-    return process_packet(conf->url_filter, conf->output_path, content, len);
+    return process_packet(conf->url_filter_re, conf->url_filter_extra, conf->output_path, content, len);
 }
 
 static const struct option longopts[] = {
@@ -263,6 +264,8 @@ capture_config *default_config() {
     conf->snaplen = MAXIMUM_SNAPLEN;
     conf->device[0] = 0;
     conf->filter = "tcp";
+    conf->url_filter_re = NULL;
+    conf->url_filter_extra = NULL;
 
     return conf;
 }
@@ -283,14 +286,15 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
                 conf->filter = optarg;
                 break;
             case 'u':
-                try {
-                    url_regex.assign(optarg);
-                    conf->url_filter = new std::regex(url_regex);
-                } catch (const std::regex_error& e) {
-                    std::cerr << "invalid regular expression (" << url_regex << "): " << e.what() << std::endl;
+                url_regex.assign(optarg);
+                const char *err;
+                int erroffset;
+                conf->url_filter_re = pcre_compile(url_regex.c_str(), 0, &err, &erroffset, NULL);
+                if (!conf->url_filter_re) {
+                    std::cerr << "invalid regular expression at offset " << erroffset << ": " << err << std::endl;
                     exit(1);
                 }
-
+                conf->url_filter_extra = pcre_study(conf->url_filter_re, 0, &err);
                 break;
             case 'r':
                 conf->file_name = optarg;
@@ -343,7 +347,6 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
 }
 
 int main(int argc, char **argv) {
-
     is_atty = isatty(fileno(stdout));
 
     char errbuf[PCAP_ERRBUF_SIZE];
