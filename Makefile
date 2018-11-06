@@ -27,7 +27,7 @@ http_parser.o: http_parser.cpp
 	$(CXX) $(CXXFLAGS) -c http_parser.cpp -o http_parser.o
 
 all: http_flow.o http_parser.o custom_parser.o util.o data_link.o
-	$(CXX) $(LIBS) http_flow.o http_parser.o custom_parser.o util.o data_link.o -o $(HTTPFLOW_BIN)
+	$(CXX) http_flow.o http_parser.o custom_parser.o util.o data_link.o $(LIBS) -o $(HTTPFLOW_BIN)
 	
 install:
 	@mkdir -p $(INSTALL_BIN)
