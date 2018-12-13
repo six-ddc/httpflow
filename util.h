@@ -36,6 +36,8 @@ extern bool is_atty;
 #define ANSI_COLOR_RESET   ""
 #endif  // USE_ANSI_COLOR
 
+std::string encode_base64(const std::string data);
+
 bool is_plain_text(const std::string &s);
 
 void get_join_addr(const std::string &src_addr, const std::string &dst_addr, std::string &ret);
