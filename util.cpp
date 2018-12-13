@@ -4,7 +4,7 @@ bool is_atty = true;
 
 // from https://gist.github.com/tomykaira/f0fd86b6c73063283afe550bc5d77594
 std::string encode_base64(const std::string data) {
-  constexpr char sEncodingTable[] = {
+  static const char sEncodingTable[] = {
       'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
       'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
       'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
