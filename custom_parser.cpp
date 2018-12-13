@@ -148,7 +148,7 @@ std::ostream& operator<<(std::ostream& out, const custom_parser& parser) {
     if (!is_atty || is_plain_text(parser.request_body)) {
         out << parser.request_body;
     } else {
-        out << ANSI_COLOR_RED << "[binary request body]" << ANSI_COLOR_RESET;
+        out << ANSI_COLOR_GREEN << encode_base64(parser.request_body) << ANSI_COLOR_RESET;
     }
     out << std::endl
         << ANSI_COLOR_BLUE
@@ -159,7 +159,7 @@ std::ostream& operator<<(std::ostream& out, const custom_parser& parser) {
     } else if (!is_atty || is_plain_text(parser.response_body)) {
         out << parser.response_body;
     } else {
-        out << ANSI_COLOR_RED << "[binary response body]" << ANSI_COLOR_RESET;
+        out << ANSI_COLOR_GREEN << encode_base64(parser.response_body) << ANSI_COLOR_RESET;
     }
     return out;
 }
