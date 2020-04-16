@@ -1,10 +1,9 @@
-#include <stdio.h>
+#include <cstdio>
 #include <pcap.h>
 #include <pcre.h>
 #include <arpa/inet.h>
-#include <stdlib.h>
 #include <getopt.h>
-#include <errno.h>
+#include <cerrno>
 #include <string>
 #include <sstream>
 #include <list>
@@ -81,6 +80,7 @@ static bool process_tcp(struct packet_info *packet, const u_char *content, size_
 
     content += tcp_header_len;
     packet->body = std::string(reinterpret_cast<const char *>(content), len - tcp_header_len);
+    packet->seq = htonl(tcp_header->th_seq);
     return true;
 }
 
@@ -153,7 +153,7 @@ void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extr
     if (iter == http_requests.end() || iter->second.empty()) {
         if (!packet.body.empty()) {
             custom_parser *parser = new custom_parser;
-            if (parser->parse(packet.body, HTTP_REQUEST)) {
+            if (parser->parse(packet, HTTP_REQUEST)) {
                 parser->set_addr(packet.src_addr, packet.dst_addr);
                 std::list<custom_parser *> requests;
                 requests.push_back(parser);
@@ -170,20 +170,20 @@ void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extr
             if (last_parser->is_request_address(packet.src_addr)) {
                 // Request
                 if (last_parser->is_request_complete()) {
-                    custom_parser* parser = new custom_parser;
-                    if (parser->parse(packet.body, HTTP_REQUEST)) {
+                    custom_parser *parser = new custom_parser;
+                    if (parser->parse(packet, HTTP_REQUEST)) {
                         parser->set_addr(packet.src_addr, packet.dst_addr);
                         parser_list.push_back(parser);
                     } else {
                         delete parser;
                     }
                 } else {
-                    last_parser->parse(packet.body, HTTP_REQUEST);
+                    last_parser->parse(packet, HTTP_REQUEST);
                 }
             } else {
                 for (std::list<custom_parser *>::iterator it = parser_list.begin(); it != parser_list.end(); ++it) {
                     if (!(*it)->is_response_complete()) {
-                        (*it)->parse(packet.body, HTTP_RESPONSE);
+                        (*it)->parse(packet, HTTP_RESPONSE);
                         break;
                     } else {
                         std::cerr << ANSI_COLOR_RED << "get response exception, body [" << packet.body
