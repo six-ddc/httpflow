@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "util.h"
-#include "custom_parser.h"
+#include "stream_parser.h"
 #include "data_link.h"
 
 #define HTTPFLOW_VERSION "0.0.6"
@@ -31,7 +31,7 @@ struct capture_config {
     int datalink_size;
 };
 
-std::map<std::string, custom_parser *> http_requests;
+std::map<std::string, stream_parser *> http_requests;
 
 struct tcphdr {
     uint16_t th_sport;       /* source port */
@@ -147,11 +147,11 @@ void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extr
 
     std::string join_addr;
     get_join_addr(packet.src_addr, packet.dst_addr, join_addr);
-    std::map<std::string, custom_parser *>::iterator iter = http_requests.find(join_addr);
+    std::map<std::string, stream_parser *>::iterator iter = http_requests.find(join_addr);
 
     if (!packet.body.empty()) {
         if (iter == http_requests.end()) {
-            custom_parser *parser = new custom_parser(url_filter_re, url_filter_extra, output_path);
+            stream_parser *parser = new stream_parser(url_filter_re, url_filter_extra, output_path);
             if (parser->parse(packet, HTTP_REQUEST)) {
                 parser->set_addr(packet.src_addr, packet.dst_addr);
                 http_requests.insert(std::make_pair(join_addr, parser));
@@ -159,7 +159,7 @@ void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extr
                 delete parser;
             }
         } else {
-            custom_parser *parser = iter->second;
+            stream_parser *parser = iter->second;
             enum http_parser_type type = parser->is_request_address(packet.src_addr) ? HTTP_REQUEST : HTTP_RESPONSE;
             if (!parser->parse(packet, type)) {
                 delete parser;

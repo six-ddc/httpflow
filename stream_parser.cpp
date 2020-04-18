@@ -1,7 +1,7 @@
-#include "custom_parser.h"
+#include "stream_parser.h"
 #include "util.h"
 
-custom_parser::custom_parser(const pcre *url_filter_re, const pcre_extra *url_filter_extra,
+stream_parser::stream_parser(const pcre *url_filter_re, const pcre_extra *url_filter_extra,
                              const std::string &output_path) :
         url_filter_re(url_filter_re),
         url_filter_extra(url_filter_extra),
@@ -21,7 +21,7 @@ custom_parser::custom_parser(const pcre *url_filter_re, const pcre_extra *url_fi
     settings.on_message_complete = on_message_complete;
 }
 
-bool custom_parser::parse(const struct packet_info &packet, enum http_parser_type type) {
+bool stream_parser::parse(const struct packet_info &packet, enum http_parser_type type) {
     if (parser.type != type) {
         http_parser_init(&parser, type);
     }
@@ -61,17 +61,17 @@ bool custom_parser::parse(const struct packet_info &packet, enum http_parser_typ
     return true;
 }
 
-std::string custom_parser::get_response_body() const {
+std::string stream_parser::get_response_body() const {
     return body[HTTP_RESPONSE];
 }
 
-void custom_parser::set_addr(const std::string &req_addr, const std::string &resp_addr) {
+void stream_parser::set_addr(const std::string &req_addr, const std::string &resp_addr) {
     this->address[HTTP_REQUEST] = req_addr;
     this->address[HTTP_RESPONSE] = resp_addr;
 }
 
-int custom_parser::on_url(http_parser *parser, const char *at, size_t length) {
-    custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
+int stream_parser::on_url(http_parser *parser, const char *at, size_t length) {
+    stream_parser *self = reinterpret_cast<stream_parser *>(parser->data);
     self->url.assign(at, length);
     self->method.assign(http_method_str(static_cast<enum http_method>(parser->method)));
     if (!self->match_url(self->url)) {
@@ -80,8 +80,8 @@ int custom_parser::on_url(http_parser *parser, const char *at, size_t length) {
     return 0;
 };
 
-int custom_parser::on_header_field(http_parser *parser, const char *at, size_t length) {
-    custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
+int stream_parser::on_header_field(http_parser *parser, const char *at, size_t length) {
+    stream_parser *self = reinterpret_cast<stream_parser *>(parser->data);
     self->temp_header_field.assign(at, length);
     for (size_t i = 0; i < length; ++i) {
         if (at[i] >= 'A' && at[i] <= 'Z') {
@@ -91,8 +91,8 @@ int custom_parser::on_header_field(http_parser *parser, const char *at, size_t l
     return 0;
 }
 
-int custom_parser::on_header_value(http_parser *parser, const char *at, size_t length) {
-    custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
+int stream_parser::on_header_value(http_parser *parser, const char *at, size_t length) {
+    stream_parser *self = reinterpret_cast<stream_parser *>(parser->data);
     if (parser->type == HTTP_RESPONSE) {
         if (self->temp_header_field == "content-encoding" && std::strstr(at, "gzip")) {
             self->gzip_flag = true;
@@ -106,26 +106,26 @@ int custom_parser::on_header_value(http_parser *parser, const char *at, size_t l
     return 0;
 }
 
-int custom_parser::on_headers_complete(http_parser *parser) {
+int stream_parser::on_headers_complete(http_parser *parser) {
     if (parser->type == HTTP_REQUEST || parser->type == HTTP_RESPONSE) {
-        custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
+        stream_parser *self = reinterpret_cast<stream_parser *>(parser->data);
         self->header[parser->type] = self->raw[parser->type].substr(0, parser->nread);
     }
     return 0;
 }
 
-int custom_parser::on_body(http_parser *parser, const char *at, size_t length) {
+int stream_parser::on_body(http_parser *parser, const char *at, size_t length) {
     if (parser->type == HTTP_REQUEST || parser->type == HTTP_RESPONSE) {
-        custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
+        stream_parser *self = reinterpret_cast<stream_parser *>(parser->data);
         self->body[parser->type].append(at, length);
     }
     return 0;
 }
 
-int custom_parser::on_message_complete(http_parser *parser) {
-    custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
+int stream_parser::on_message_complete(http_parser *parser) {
+    stream_parser *self = reinterpret_cast<stream_parser *>(parser->data);
     if (parser->type == HTTP_RESPONSE) {
-        if (self->gzip_flag) {
+        if (self->gzip_flag && !self->body[HTTP_RESPONSE].empty()) {
             std::string new_body;
             if (gzip_decompress(self->body[HTTP_RESPONSE], new_body)) {
                 self->body[HTTP_RESPONSE] = new_body;
@@ -138,14 +138,14 @@ int custom_parser::on_message_complete(http_parser *parser) {
     return 0;
 }
 
-bool custom_parser::match_url(const std::string &url) {
+bool stream_parser::match_url(const std::string &url) {
     if (!url_filter_re) return true;
     int ovector[30];
     int rc = pcre_exec(url_filter_re, url_filter_extra, url.c_str(), url.size(), 0, 0, ovector, 30);
     return rc >= 0;
 }
 
-void custom_parser::save_http_request() {
+void stream_parser::save_http_request() {
     std::cout << ANSI_COLOR_CYAN << address[HTTP_REQUEST] << " -> " << address[HTTP_RESPONSE]
               << ANSI_COLOR_RESET << std::endl;
     if (!output_path.empty()) {
@@ -169,7 +169,7 @@ void custom_parser::save_http_request() {
     body[HTTP_RESPONSE].clear();
 }
 
-std::ostream &operator<<(std::ostream &out, const custom_parser &parser) {
+std::ostream &operator<<(std::ostream &out, const stream_parser &parser) {
     out << ANSI_COLOR_GREEN
         << parser.header[HTTP_REQUEST]
         << ANSI_COLOR_RESET;
@@ -194,7 +194,7 @@ std::ostream &operator<<(std::ostream &out, const custom_parser &parser) {
     return out;
 }
 
-std::ofstream &operator<<(std::ofstream &out, const custom_parser &parser) {
+std::ofstream &operator<<(std::ofstream &out, const stream_parser &parser) {
     out << parser.header[HTTP_REQUEST]
         << parser.body[HTTP_REQUEST]
         << parser.header[HTTP_RESPONSE]

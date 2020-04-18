@@ -8,11 +8,11 @@
 #include <map>
 #include "http_parser.h"
 
-class custom_parser {
+class stream_parser {
 
-    friend std::ofstream &operator<<(std::ofstream &out, const custom_parser &f);
+    friend std::ofstream &operator<<(std::ofstream &out, const stream_parser &f);
 
-    friend std::ostream &operator<<(std::ostream &out, const custom_parser &f);
+    friend std::ostream &operator<<(std::ostream &out, const stream_parser &f);
 
 private:
     const pcre *url_filter_re;
@@ -37,7 +37,7 @@ private:
     std::string host;
 
 public:
-    custom_parser(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &output_path);
+    stream_parser(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &output_path);
 
     bool parse(const struct packet_info &body, enum http_parser_type type);
 
@@ -66,8 +66,8 @@ public:
     static int on_message_complete(http_parser *parser);
 };
 
-std::ostream &operator<<(std::ostream &out, const custom_parser &parser);
+std::ostream &operator<<(std::ostream &out, const stream_parser &parser);
 
-std::ofstream &operator<<(std::ofstream &out, const custom_parser &parser);
+std::ofstream &operator<<(std::ofstream &out, const stream_parser &parser);
 
 #endif
