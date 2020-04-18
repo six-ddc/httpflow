@@ -351,7 +351,7 @@ int main(int argc, char **argv) {
 
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t *handle = NULL;
-    bpf_u_int32 net, mask;
+    bpf_u_int32 net = 0, mask = 0;
     struct bpf_program fcode;
     int datalink_id;
     std::string datalink_str;
@@ -368,10 +368,7 @@ int main(int argc, char **argv) {
             return 1;
         }
     } else {
-        if (-1 == pcap_lookupnet(cap_conf->device, &net, &mask, errbuf)) {
-            std::cerr << "pcap_lookupnet(): " << errbuf << std::endl;
-            return 1;
-        }
+        pcap_lookupnet(cap_conf->device, &net, &mask, errbuf);
 
         handle = pcap_open_live(cap_conf->device, cap_conf->snaplen, 0, 1000, errbuf);
         if (!handle) {
