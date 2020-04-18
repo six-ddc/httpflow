@@ -1,9 +1,12 @@
 #include "custom_parser.h"
 #include "util.h"
 
-custom_parser::custom_parser() : gzip_flag(false) {
-    complete_flag[HTTP_REQUEST] = false;
-    complete_flag[HTTP_RESPONSE] = false;
+custom_parser::custom_parser(const pcre *url_filter_re, const pcre_extra *url_filter_extra,
+                             const std::string &output_path) :
+        url_filter_re(url_filter_re),
+        url_filter_extra(url_filter_extra),
+        output_path(output_path),
+        gzip_flag(false) {
     next_seq[HTTP_REQUEST] = 0;
     next_seq[HTTP_RESPONSE] = 0;
     http_parser_init(&parser, HTTP_REQUEST);
@@ -35,14 +38,14 @@ bool custom_parser::parse(const struct packet_info &packet, enum http_parser_typ
                 out_of_order_packet[parser.type].insert(std::make_pair(packet.seq, packet.body));
             }
         } else {
-            raw[parser.type].append(packet.body);
+            str->append(packet.body);
             next_seq[parser.type] = packet.seq + packet.body.size();
         }
         while (!out_of_order_packet[parser.type].empty()) {
             const std::map<uint32_t, std::string>::iterator &iterator =
                     out_of_order_packet[parser.type].find(next_seq[parser.type]);
             if (iterator != out_of_order_packet[parser.type].end()) {
-                raw[parser.type].append(iterator->second);
+                str->append(iterator->second);
                 next_seq[parser.type] += iterator->second.size();
                 out_of_order_packet[parser.type].erase(iterator);
             } else {
@@ -62,15 +65,18 @@ std::string custom_parser::get_response_body() const {
     return body[HTTP_RESPONSE];
 }
 
-void custom_parser::set_addr(const std::string &src_addr, const std::string &dst_addr) {
-    this->address[HTTP_REQUEST] = src_addr;
-    this->address[HTTP_RESPONSE] = dst_addr;
+void custom_parser::set_addr(const std::string &req_addr, const std::string &resp_addr) {
+    this->address[HTTP_REQUEST] = req_addr;
+    this->address[HTTP_RESPONSE] = resp_addr;
 }
 
 int custom_parser::on_url(http_parser *parser, const char *at, size_t length) {
     custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
     self->url.assign(at, length);
     self->method.assign(http_method_str(static_cast<enum http_method>(parser->method)));
+    if (!self->match_url(self->url)) {
+        return -1;
+    }
     return 0;
 };
 
@@ -118,35 +124,30 @@ int custom_parser::on_body(http_parser *parser, const char *at, size_t length) {
 
 int custom_parser::on_message_complete(http_parser *parser) {
     custom_parser *self = reinterpret_cast<custom_parser *>(parser->data);
-    if (parser->type == HTTP_REQUEST || parser->type == HTTP_RESPONSE) {
-        self->complete_flag[parser->type] = true;
-    }
-    if (self->gzip_flag) {
-        std::string new_body;
-        if (gzip_decompress(self->body[HTTP_RESPONSE], new_body)) {
-            self->body[HTTP_RESPONSE] = new_body;
-        } else {
-            std::cerr << ANSI_COLOR_RED << "[decompress error]" << ANSI_COLOR_RESET << std::endl;
+    if (parser->type == HTTP_RESPONSE) {
+        if (self->gzip_flag) {
+            std::string new_body;
+            if (gzip_decompress(self->body[HTTP_RESPONSE], new_body)) {
+                self->body[HTTP_RESPONSE] = new_body;
+            } else {
+                std::cerr << ANSI_COLOR_RED << "[decompress error]" << ANSI_COLOR_RESET << std::endl;
+            }
         }
+        self->save_http_request();
     }
     return 0;
 }
 
-bool custom_parser::filter_url(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &url) {
+bool custom_parser::match_url(const std::string &url) {
     if (!url_filter_re) return true;
     int ovector[30];
     int rc = pcre_exec(url_filter_re, url_filter_extra, url.c_str(), url.size(), 0, 0, ovector, 30);
     return rc >= 0;
 }
 
-void custom_parser::save_http_request(const pcre *url_filter_re, const pcre_extra *url_filter_extra,
-                                      const std::string &output_path, const std::string &join_addr) {
-    std::string host_with_url = host + url;
-    if (!filter_url(url_filter_re, url_filter_extra, host_with_url)) {
-        return;
-    }
-    std::cout << ANSI_COLOR_CYAN << address[HTTP_REQUEST] << " -> " << address[HTTP_RESPONSE] << ANSI_COLOR_RESET
-              << std::endl;
+void custom_parser::save_http_request() {
+    std::cout << ANSI_COLOR_CYAN << address[HTTP_REQUEST] << " -> " << address[HTTP_RESPONSE]
+              << ANSI_COLOR_RESET << std::endl;
     if (!output_path.empty()) {
         std::string save_filename = output_path + "/" + host;
         std::ofstream out(save_filename.c_str(), std::ios::app | std::ios::out);
@@ -161,6 +162,11 @@ void custom_parser::save_http_request(const pcre *url_filter_re, const pcre_extr
     } else {
         std::cout << *this << std::endl;
     }
+    // clear
+    raw[HTTP_REQUEST].clear();
+    raw[HTTP_RESPONSE].clear();
+    body[HTTP_REQUEST].clear();
+    body[HTTP_RESPONSE].clear();
 }
 
 std::ostream &operator<<(std::ostream &out, const custom_parser &parser) {
@@ -170,7 +176,8 @@ std::ostream &operator<<(std::ostream &out, const custom_parser &parser) {
     if (!is_atty || is_plain_text(parser.body[HTTP_REQUEST])) {
         out << parser.body[HTTP_REQUEST];
     } else {
-        out << ANSI_COLOR_RED << "[binary request body]" << ANSI_COLOR_RESET;
+        out << ANSI_COLOR_RED << "[binary request body] (size:" << parser.body[HTTP_REQUEST].size() << ")"
+            << ANSI_COLOR_RESET;
     }
     out << std::endl
         << ANSI_COLOR_BLUE
@@ -181,7 +188,8 @@ std::ostream &operator<<(std::ostream &out, const custom_parser &parser) {
     } else if (!is_atty || is_plain_text(parser.body[HTTP_RESPONSE])) {
         out << parser.body[HTTP_RESPONSE];
     } else {
-        out << ANSI_COLOR_RED << "[binary response body]" << ANSI_COLOR_RESET;
+        out << ANSI_COLOR_RED << "[binary response body] (size:" << parser.body[HTTP_RESPONSE].size() << ")"
+            << ANSI_COLOR_RESET;
     }
     return out;
 }

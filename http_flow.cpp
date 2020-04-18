@@ -15,7 +15,7 @@
 #include "custom_parser.h"
 #include "data_link.h"
 
-#define HTTPFLOW_VERSION "0.0.5"
+#define HTTPFLOW_VERSION "0.0.6"
 
 #define MAXIMUM_SNAPLEN 262144
 
@@ -26,12 +26,12 @@ struct capture_config {
     char device[IFNAMSIZ];
     std::string file_name;
     std::string filter;
-    pcre* url_filter_re;
-    pcre_extra* url_filter_extra;
+    pcre *url_filter_re;
+    pcre_extra *url_filter_extra;
     int datalink_size;
 };
 
-std::map<std::string, std::list<custom_parser *> > http_requests;
+std::map<std::string, custom_parser *> http_requests;
 
 struct tcphdr {
     uint16_t th_sport;       /* source port */
@@ -138,72 +138,39 @@ struct ether_header {
     u_short ether_type;
 };
 
-void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &output_path, const u_char* data, size_t len) {
+void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &output_path,
+                    const u_char *data, size_t len) {
 
     struct packet_info packet;
     bool ret = process_ipv4(&packet, data, len);
-    if ((!ret || packet.body.empty()) && !packet.is_fin) {
-        return;
-    }
+    if (!ret || (packet.body.empty() && !packet.is_fin)) return;
 
     std::string join_addr;
     get_join_addr(packet.src_addr, packet.dst_addr, join_addr);
+    std::map<std::string, custom_parser *>::iterator iter = http_requests.find(join_addr);
 
-    std::map<std::string, std::list<custom_parser *> >::iterator iter = http_requests.find(join_addr);
-    if (iter == http_requests.end() || iter->second.empty()) {
-        if (!packet.body.empty()) {
-            custom_parser *parser = new custom_parser;
+    if (!packet.body.empty()) {
+        if (iter == http_requests.end()) {
+            custom_parser *parser = new custom_parser(url_filter_re, url_filter_extra, output_path);
             if (parser->parse(packet, HTTP_REQUEST)) {
                 parser->set_addr(packet.src_addr, packet.dst_addr);
-                std::list<custom_parser *> requests;
-                requests.push_back(parser);
-                http_requests.insert(std::make_pair(join_addr, requests));
+                http_requests.insert(std::make_pair(join_addr, parser));
             } else {
                 delete parser;
             }
-        }
-    } else {
-        std::list<custom_parser *> &parser_list = iter->second;
-        custom_parser *last_parser = *(parser_list.rbegin());
-
-        if (!packet.body.empty()) {
-            if (last_parser->is_request_address(packet.src_addr)) {
-                // Request
-                if (last_parser->is_request_complete()) {
-                    custom_parser *parser = new custom_parser;
-                    if (parser->parse(packet, HTTP_REQUEST)) {
-                        parser->set_addr(packet.src_addr, packet.dst_addr);
-                        parser_list.push_back(parser);
-                    } else {
-                        delete parser;
-                    }
-                } else {
-                    last_parser->parse(packet, HTTP_REQUEST);
-                }
-            } else {
-                for (std::list<custom_parser *>::iterator it = parser_list.begin(); it != parser_list.end(); ++it) {
-                    if (!(*it)->is_response_complete()) {
-                        (*it)->parse(packet, HTTP_RESPONSE);
-                        break;
-                    } else {
-                        std::cerr << ANSI_COLOR_RED << "get response exception, body [" << packet.body
-                                  << "]" << ANSI_COLOR_RESET << std::endl;
-                    }
-                }
+        } else {
+            custom_parser *parser = iter->second;
+            enum http_parser_type type = parser->is_request_address(packet.src_addr) ? HTTP_REQUEST : HTTP_RESPONSE;
+            if (!parser->parse(packet, type)) {
+                delete parser;
+                http_requests.erase(iter);
             }
         }
+    }
 
-        for (std::list<custom_parser *>::iterator it = parser_list.begin(); it != parser_list.end();) {
-            if ((*it)->is_response_complete() || packet.is_fin) {
-                (*it)->save_http_request(url_filter_re, url_filter_extra, output_path, join_addr);
-                delete (*it);
-                it = iter->second.erase(it);
-            } else {
-                ++it;
-            }
-        }
-
-        if (iter->second.empty()) {
+    if (packet.is_fin) {
+        if (iter != http_requests.end()) {
+            delete iter->second;
             http_requests.erase(iter);
         }
     }
@@ -229,7 +196,6 @@ static const struct option longopts[] = {
         {"filter",          required_argument, NULL, 'f'},
         {"url_filter",      required_argument, NULL, 'u'},
         {"pcap-file",       required_argument, NULL, 'r'},
-        {"snapshot-length", required_argument, NULL, 's'},
         {"output-path",     required_argument, NULL, 'w'},
         {NULL, 0,                              NULL, 0}
 };
@@ -240,13 +206,15 @@ int print_usage() {
     std::cerr << "libpcap version " << pcap_lib_version() << "\n"
               << "httpflow version " HTTPFLOW_VERSION "\n"
               << "\n"
-              << "Usage: httpflow [-i interface | -r pcap-file] [-f packet-filter] [-u url-filter] [-w output-path]" << "\n"
+              << "Usage: httpflow [-i interface | -r pcap-file] [-f packet-filter] [-u url-filter] [-w output-path]"
+              << "\n"
               << "\n"
               << "  -i interface      Listen on interface" << "\n"
               << "  -r pcap-file      Read packets from file (which was created by tcpdump with the -w option)" << "\n"
               << "                    Standard input is used if file is '-'" << "\n"
               << "  -f packet-filter  Selects which packets will be dumped" << "\n"
-              << "                    If filter expression is given, only packets for which expression is 'true' will be dumped" << "\n"
+              << "                    If filter expression is given, only packets for which expression is 'true' will be dumped"
+              << "\n"
               << "                    For the expression syntax, see pcap-filter(7)" << "\n"
               << "  -u url-filter     Matches which urls will be dumped" << "\n"
               << "  -w output-path    Write the http request and response to a specific directory" << "\n"
@@ -393,10 +361,11 @@ int main(int argc, char **argv) {
 
     pcap_freecode(&fcode);
 
-	datalink_id = pcap_datalink(handle);
-	datalink_str = datalink2str(datalink_id);
-	cap_conf->datalink_size = datalink2off(datalink_id);
-    std::cerr << "datalink: " << datalink_id << "(" << datalink_str << ") header size: " << cap_conf->datalink_size << std::endl;
+    datalink_id = pcap_datalink(handle);
+    datalink_str = datalink2str(datalink_id);
+    cap_conf->datalink_size = datalink2off(datalink_id);
+    std::cerr << "datalink: " << datalink_id << "(" << datalink_str << ") header size: " << cap_conf->datalink_size
+              << std::endl;
 
     if (-1 == pcap_loop(handle, -1, pcap_callback, reinterpret_cast<u_char *>(cap_conf))) {
         std::cerr << "pcap_loop(): " << pcap_geterr(handle) << std::endl;
