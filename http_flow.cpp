@@ -101,31 +101,72 @@ struct ip {
     uint32_t ip_src, ip_dst;  /* source and dest address */
 };
 
+struct ip6_hdr {
+    union {
+        struct ip6_hdrctl {
+            uint32_t ip6_un1_flow;  /* 20 bits of flow-ID */
+            uint16_t ip6_un1_plen;  /* payload length */
+            uint8_t ip6_un1_nxt;   /* next header */
+            uint8_t ip6_un1_hlim;  /* hop limit */
+        } ip6_un1;
+        uint8_t ip6_un2_vfc;    /* 4 bits version, top 4 bits class */
+    } ip6_ctlun;
+    struct in6_addr ip6_src;    /* source address */
+    struct in6_addr ip6_dst;    /* destination address */
+} UNALIGNED;
+
+#define ip6_plen    ip6_ctlun.ip6_un1.ip6_un1_plen
+#define ip6_nxt     ip6_ctlun.ip6_un1.ip6_un1_nxt
+
 static bool process_ipv4(struct packet_info *packet, const u_char *content, size_t len) {
     if (len < sizeof(struct ip)) {
         std::cerr << "received truncated IP datagram." << std::endl;
         return false;
     }
     const struct ip *ip_header = reinterpret_cast<const struct ip *>(content);
-    if (4 != IP_V(ip_header) || ip_header->ip_p != IPPROTO_TCP) {
-        return false;
+    const struct ip6_hdr *ip6_header = NULL;
+    if (6 == IP_V(ip_header)) {
+        ip6_header = reinterpret_cast<const struct ip6_hdr *>(content);
     }
-    size_t ip_header_len = IP_HL(ip_header) << 2;
-    size_t ip_len = ntohs(ip_header->ip_len);
 
-    char src_addr[INET_ADDRSTRLEN];
-    char dst_addr[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &ip_header->ip_src, src_addr, INET_ADDRSTRLEN);
-    inet_ntop(AF_INET, &ip_header->ip_dst, dst_addr, INET_ADDRSTRLEN);
-    packet->src_addr.assign(src_addr);
-    packet->dst_addr.assign(dst_addr);
+    size_t ip_payload_len;
+    if (ip6_header) {
+        if (ip6_header->ip6_nxt != IPPROTO_TCP) {
+            return false;
+        }
+        ip_payload_len = ntohs(ip6_header->ip6_plen);
+        size_t ip_header_len = sizeof(struct ip6_hdr);
+        if (len < ip_header_len + ip_payload_len) {
+            std::cerr << "received truncated IP6 datagram." << std::endl;
+            return false;
+        }
+        content += ip_header_len;
 
-    if (ip_len > len || ip_len < ip_header_len) {
-        std::cerr << "received truncated IP datagram." << std::endl;
-        return false;
+        char addr[INET6_ADDRSTRLEN];
+        inet_ntop(AF_INET6, &ip6_header->ip6_src, addr, INET6_ADDRSTRLEN);
+        packet->src_addr.assign(addr);
+        inet_ntop(AF_INET6, &ip6_header->ip6_dst, addr, INET6_ADDRSTRLEN);
+        packet->dst_addr.assign(addr);
+    } else {
+        if (ip_header->ip_p != IPPROTO_TCP) {
+            return false;
+        }
+        size_t ip_header_len = IP_HL(ip_header) << 2;
+        size_t ip_len = ntohs(ip_header->ip_len);
+        if (ip_len > len || ip_len < ip_header_len) {
+            std::cerr << "received truncated IP4 datagram." << std::endl;
+            return false;
+        }
+        ip_payload_len = ip_len - ip_header_len;
+        content += ip_header_len;
+
+        char addr[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &ip_header->ip_src, addr, INET_ADDRSTRLEN);
+        packet->src_addr.assign(addr);
+        inet_ntop(AF_INET, &ip_header->ip_dst, addr, INET_ADDRSTRLEN);
+        packet->dst_addr.assign(addr);
     }
-    size_t ip_payload_len = ip_len - ip_header_len;
-    content += ip_header_len;
+
     return process_tcp(packet, content, ip_payload_len);
 }
 
