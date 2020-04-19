@@ -32,9 +32,10 @@ bool stream_parser::parse(const struct packet_info &packet, enum http_parser_typ
         str = &raw[parser.type];
         if (next_seq[parser.type] != 0 && packet.seq != next_seq[parser.type]) {
             if (packet.seq < next_seq[parser.type]) {
-                // ignore retransmission
+                // retransmission packet
                 return true;
             } else {
+                // out-of-order packet
                 out_of_order_packet[parser.type].insert(std::make_pair(packet.seq, packet.body));
             }
         } else {
@@ -59,10 +60,6 @@ bool stream_parser::parse(const struct packet_info &packet, enum http_parser_typ
         return parse_bytes > 0 && HTTP_PARSER_ERRNO(&parser) == HPE_OK;
     }
     return true;
-}
-
-std::string stream_parser::get_response_body() const {
-    return body[HTTP_RESPONSE];
 }
 
 void stream_parser::set_addr(const std::string &req_addr, const std::string &resp_addr) {
@@ -163,10 +160,10 @@ void stream_parser::save_http_request() {
         std::cout << *this << std::endl;
     }
     // clear
-    raw[HTTP_REQUEST].clear();
-    raw[HTTP_RESPONSE].clear();
-    body[HTTP_REQUEST].clear();
-    body[HTTP_RESPONSE].clear();
+    raw[HTTP_REQUEST] = std::string();
+    raw[HTTP_RESPONSE] = std::string();
+    body[HTTP_REQUEST] = std::string();
+    body[HTTP_RESPONSE] = std::string();
 }
 
 std::ostream &operator<<(std::ostream &out, const stream_parser &parser) {

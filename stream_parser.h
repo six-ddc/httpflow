@@ -41,8 +41,6 @@ public:
 
     bool parse(const struct packet_info &body, enum http_parser_type type);
 
-    std::string get_response_body() const;
-
     inline bool is_request_address(const std::string &addr) const {
         return address[HTTP_REQUEST] == addr;
     }

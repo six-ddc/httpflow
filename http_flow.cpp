@@ -168,11 +168,9 @@ void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extr
         }
     }
 
-    if (packet.is_fin) {
-        if (iter != http_requests.end()) {
-            delete iter->second;
-            http_requests.erase(iter);
-        }
+    if (packet.is_fin && iter != http_requests.end()) {
+        delete iter->second;
+        http_requests.erase(iter);
     }
 }
 
@@ -191,13 +189,13 @@ void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *
 }
 
 static const struct option longopts[] = {
-        {"help",            no_argument,       NULL, 'h'},
-        {"interface",       required_argument, NULL, 'i'},
-        {"filter",          required_argument, NULL, 'f'},
-        {"url_filter",      required_argument, NULL, 'u'},
-        {"pcap-file",       required_argument, NULL, 'r'},
-        {"output-path",     required_argument, NULL, 'w'},
-        {NULL, 0,                              NULL, 0}
+        {"help",        no_argument,       NULL, 'h'},
+        {"interface",   required_argument, NULL, 'i'},
+        {"filter",      required_argument, NULL, 'f'},
+        {"url-filter",  required_argument, NULL, 'u'},
+        {"pcap-file",   required_argument, NULL, 'r'},
+        {"output-path", required_argument, NULL, 'w'},
+        {NULL, 0,                          NULL, 0}
 };
 
 #define SHORTOPTS "hi:f:u:r:w:"
