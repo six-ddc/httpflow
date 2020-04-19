@@ -40,7 +40,7 @@ or directly download [Release](https://github.com/six-ddc/httpflow/releases) bin
 
 ```
 libpcap version libpcap version 1.8.1 -- Apple version 67.60.1
-httpflow version 0.0.5
+httpflow version 0.0.6
 
 Usage: httpflow [-i interface | -r pcap-file] [-f packet-filter] [-u url-filter] [-w output-path]
 
@@ -80,10 +80,10 @@ Usage: httpflow [-i interface | -r pcap-file] [-f packet-filter] [-u url-filter]
 * Use the regexp to filter request urls
 
 ```bash
-> httpflow -u '(google.com|httpbin.org)/.*/get'
+> httpflow -u '/user/[0-9]+'
 ```
 
-* Read packets from file
+* Read packets from pcap-file
 
 ```bash
 # tcpdump -w a.cap

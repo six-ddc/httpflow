@@ -1,10 +1,9 @@
-#include <stdio.h>
+#include <cstdio>
 #include <pcap.h>
 #include <pcre.h>
 #include <arpa/inet.h>
-#include <stdlib.h>
 #include <getopt.h>
-#include <errno.h>
+#include <cerrno>
 #include <string>
 #include <sstream>
 #include <list>
@@ -13,10 +12,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "util.h"
-#include "custom_parser.h"
+#include "stream_parser.h"
 #include "data_link.h"
 
-#define HTTPFLOW_VERSION "0.0.5"
+#define HTTPFLOW_VERSION "0.0.6"
 
 #define MAXIMUM_SNAPLEN 262144
 
@@ -27,12 +26,12 @@ struct capture_config {
     char device[IFNAMSIZ];
     std::string file_name;
     std::string filter;
-    pcre* url_filter_re;
-    pcre_extra* url_filter_extra;
+    pcre *url_filter_re;
+    pcre_extra *url_filter_extra;
     int datalink_size;
 };
 
-std::map<std::string, std::list<custom_parser *> > http_requests;
+std::map<std::string, stream_parser *> http_requests;
 
 struct tcphdr {
     uint16_t th_sport;       /* source port */
@@ -81,6 +80,7 @@ static bool process_tcp(struct packet_info *packet, const u_char *content, size_
 
     content += tcp_header_len;
     packet->body = std::string(reinterpret_cast<const char *>(content), len - tcp_header_len);
+    packet->seq = htonl(tcp_header->th_seq);
     return true;
 }
 
@@ -101,31 +101,72 @@ struct ip {
     uint32_t ip_src, ip_dst;  /* source and dest address */
 };
 
+struct ip6_hdr {
+    union {
+        struct ip6_hdrctl {
+            uint32_t ip6_un1_flow;  /* 20 bits of flow-ID */
+            uint16_t ip6_un1_plen;  /* payload length */
+            uint8_t ip6_un1_nxt;   /* next header */
+            uint8_t ip6_un1_hlim;  /* hop limit */
+        } ip6_un1;
+        uint8_t ip6_un2_vfc;    /* 4 bits version, top 4 bits class */
+    } ip6_ctlun;
+    struct in6_addr ip6_src;    /* source address */
+    struct in6_addr ip6_dst;    /* destination address */
+} UNALIGNED;
+
+#define ip6_plen    ip6_ctlun.ip6_un1.ip6_un1_plen
+#define ip6_nxt     ip6_ctlun.ip6_un1.ip6_un1_nxt
+
 static bool process_ipv4(struct packet_info *packet, const u_char *content, size_t len) {
     if (len < sizeof(struct ip)) {
         std::cerr << "received truncated IP datagram." << std::endl;
         return false;
     }
     const struct ip *ip_header = reinterpret_cast<const struct ip *>(content);
-    if (4 != IP_V(ip_header) || ip_header->ip_p != IPPROTO_TCP) {
-        return false;
+    const struct ip6_hdr *ip6_header = NULL;
+    if (6 == IP_V(ip_header)) {
+        ip6_header = reinterpret_cast<const struct ip6_hdr *>(content);
     }
-    size_t ip_header_len = IP_HL(ip_header) << 2;
-    size_t ip_len = ntohs(ip_header->ip_len);
 
-    char src_addr[INET_ADDRSTRLEN];
-    char dst_addr[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &ip_header->ip_src, src_addr, INET_ADDRSTRLEN);
-    inet_ntop(AF_INET, &ip_header->ip_dst, dst_addr, INET_ADDRSTRLEN);
-    packet->src_addr.assign(src_addr);
-    packet->dst_addr.assign(dst_addr);
+    size_t ip_payload_len;
+    if (ip6_header) {
+        if (ip6_header->ip6_nxt != IPPROTO_TCP) {
+            return false;
+        }
+        ip_payload_len = ntohs(ip6_header->ip6_plen);
+        size_t ip_header_len = sizeof(struct ip6_hdr);
+        if (len < ip_header_len + ip_payload_len) {
+            std::cerr << "received truncated IP6 datagram." << std::endl;
+            return false;
+        }
+        content += ip_header_len;
 
-    if (ip_len > len || ip_len < ip_header_len) {
-        std::cerr << "received truncated IP datagram." << std::endl;
-        return false;
+        char addr[INET6_ADDRSTRLEN];
+        inet_ntop(AF_INET6, &ip6_header->ip6_src, addr, INET6_ADDRSTRLEN);
+        packet->src_addr.assign(addr);
+        inet_ntop(AF_INET6, &ip6_header->ip6_dst, addr, INET6_ADDRSTRLEN);
+        packet->dst_addr.assign(addr);
+    } else {
+        if (ip_header->ip_p != IPPROTO_TCP) {
+            return false;
+        }
+        size_t ip_header_len = IP_HL(ip_header) << 2;
+        size_t ip_len = ntohs(ip_header->ip_len);
+        if (ip_len > len || ip_len < ip_header_len) {
+            std::cerr << "received truncated IP4 datagram." << std::endl;
+            return false;
+        }
+        ip_payload_len = ip_len - ip_header_len;
+        content += ip_header_len;
+
+        char addr[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &ip_header->ip_src, addr, INET_ADDRSTRLEN);
+        packet->src_addr.assign(addr);
+        inet_ntop(AF_INET, &ip_header->ip_dst, addr, INET_ADDRSTRLEN);
+        packet->dst_addr.assign(addr);
     }
-    size_t ip_payload_len = ip_len - ip_header_len;
-    content += ip_header_len;
+
     return process_tcp(packet, content, ip_payload_len);
 }
 
@@ -138,74 +179,39 @@ struct ether_header {
     u_short ether_type;
 };
 
-void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &output_path, const u_char* data, size_t len) {
+void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &output_path,
+                    const u_char *data, size_t len) {
 
     struct packet_info packet;
     bool ret = process_ipv4(&packet, data, len);
-    if ((!ret || packet.body.empty()) && !packet.is_fin) {
-        return;
-    }
+    if (!ret || (packet.body.empty() && !packet.is_fin)) return;
 
     std::string join_addr;
     get_join_addr(packet.src_addr, packet.dst_addr, join_addr);
+    std::map<std::string, stream_parser *>::iterator iter = http_requests.find(join_addr);
 
-    std::map<std::string, std::list<custom_parser *> >::iterator iter = http_requests.find(join_addr);
-    if (iter == http_requests.end() || iter->second.empty()) {
-        if (!packet.body.empty()) {
-            custom_parser *parser = new custom_parser;
-            if (parser->parse(packet.body, HTTP_REQUEST)) {
+    if (!packet.body.empty()) {
+        if (iter == http_requests.end()) {
+            stream_parser *parser = new stream_parser(url_filter_re, url_filter_extra, output_path);
+            if (parser->parse(packet, HTTP_REQUEST)) {
                 parser->set_addr(packet.src_addr, packet.dst_addr);
-                std::list<custom_parser *> requests;
-                requests.push_back(parser);
-                http_requests.insert(std::make_pair(join_addr, requests));
+                http_requests.insert(std::make_pair(join_addr, parser));
             } else {
                 delete parser;
             }
-        }
-    } else {
-        std::list<custom_parser *> &parser_list = iter->second;
-        custom_parser *last_parser = *(parser_list.rbegin());
-
-        if (!packet.body.empty()) {
-            if (last_parser->is_request_address(packet.src_addr)) {
-                // Request
-                if (last_parser->is_request_complete()) {
-                    custom_parser* parser = new custom_parser;
-                    if (parser->parse(packet.body, HTTP_REQUEST)) {
-                        parser->set_addr(packet.src_addr, packet.dst_addr);
-                        parser_list.push_back(parser);
-                    } else {
-                        delete parser;
-                    }
-                } else {
-                    last_parser->parse(packet.body, HTTP_REQUEST);
-                }
-            } else {
-                for (std::list<custom_parser *>::iterator it = parser_list.begin(); it != parser_list.end(); ++it) {
-                    if (!(*it)->is_response_complete()) {
-                        (*it)->parse(packet.body, HTTP_RESPONSE);
-                        break;
-                    } else {
-                        std::cerr << ANSI_COLOR_RED << "get response exception, body [" << packet.body
-                                  << "]" << ANSI_COLOR_RESET << std::endl;
-                    }
-                }
+        } else {
+            stream_parser *parser = iter->second;
+            enum http_parser_type type = parser->is_request_address(packet.src_addr) ? HTTP_REQUEST : HTTP_RESPONSE;
+            if (!parser->parse(packet, type)) {
+                delete parser;
+                http_requests.erase(iter);
             }
         }
+    }
 
-        for (std::list<custom_parser *>::iterator it = parser_list.begin(); it != parser_list.end();) {
-            if ((*it)->is_response_complete() || packet.is_fin) {
-                (*it)->save_http_request(url_filter_re, url_filter_extra, output_path, join_addr);
-                delete (*it);
-                it = iter->second.erase(it);
-            } else {
-                ++it;
-            }
-        }
-
-        if (iter->second.empty()) {
-            http_requests.erase(iter);
-        }
+    if (packet.is_fin && iter != http_requests.end()) {
+        delete iter->second;
+        http_requests.erase(iter);
     }
 }
 
@@ -224,14 +230,13 @@ void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *
 }
 
 static const struct option longopts[] = {
-        {"help",            no_argument,       NULL, 'h'},
-        {"interface",       required_argument, NULL, 'i'},
-        {"filter",          required_argument, NULL, 'f'},
-        {"url_filter",      required_argument, NULL, 'u'},
-        {"pcap-file",       required_argument, NULL, 'r'},
-        {"snapshot-length", required_argument, NULL, 's'},
-        {"output-path",     required_argument, NULL, 'w'},
-        {NULL, 0,                              NULL, 0}
+        {"help",        no_argument,       NULL, 'h'},
+        {"interface",   required_argument, NULL, 'i'},
+        {"filter",      required_argument, NULL, 'f'},
+        {"url-filter",  required_argument, NULL, 'u'},
+        {"pcap-file",   required_argument, NULL, 'r'},
+        {"output-path", required_argument, NULL, 'w'},
+        {NULL, 0,                          NULL, 0}
 };
 
 #define SHORTOPTS "hi:f:u:r:w:"
@@ -240,13 +245,15 @@ int print_usage() {
     std::cerr << "libpcap version " << pcap_lib_version() << "\n"
               << "httpflow version " HTTPFLOW_VERSION "\n"
               << "\n"
-              << "Usage: httpflow [-i interface | -r pcap-file] [-f packet-filter] [-u url-filter] [-w output-path]" << "\n"
+              << "Usage: httpflow [-i interface | -r pcap-file] [-f packet-filter] [-u url-filter] [-w output-path]"
+              << "\n"
               << "\n"
               << "  -i interface      Listen on interface" << "\n"
               << "  -r pcap-file      Read packets from file (which was created by tcpdump with the -w option)" << "\n"
               << "                    Standard input is used if file is '-'" << "\n"
               << "  -f packet-filter  Selects which packets will be dumped" << "\n"
-              << "                    If filter expression is given, only packets for which expression is 'true' will be dumped" << "\n"
+              << "                    If filter expression is given, only packets for which expression is 'true' will be dumped"
+              << "\n"
               << "                    For the expression syntax, see pcap-filter(7)" << "\n"
               << "  -u url-filter     Matches which urls will be dumped" << "\n"
               << "  -w output-path    Write the http request and response to a specific directory" << "\n"
@@ -351,7 +358,7 @@ int main(int argc, char **argv) {
 
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t *handle = NULL;
-    bpf_u_int32 net, mask;
+    bpf_u_int32 net = 0, mask = 0;
     struct bpf_program fcode;
     int datalink_id;
     std::string datalink_str;
@@ -368,10 +375,7 @@ int main(int argc, char **argv) {
             return 1;
         }
     } else {
-        if (-1 == pcap_lookupnet(cap_conf->device, &net, &mask, errbuf)) {
-            std::cerr << "pcap_lookupnet(): " << errbuf << std::endl;
-            return 1;
-        }
+        pcap_lookupnet(cap_conf->device, &net, &mask, errbuf);
 
         handle = pcap_open_live(cap_conf->device, cap_conf->snaplen, 0, 1000, errbuf);
         if (!handle) {
@@ -396,10 +400,11 @@ int main(int argc, char **argv) {
 
     pcap_freecode(&fcode);
 
-	datalink_id = pcap_datalink(handle);
-	datalink_str = datalink2str(datalink_id);
-	cap_conf->datalink_size = datalink2off(datalink_id);
-    std::cerr << "datalink: " << datalink_id << "(" << datalink_str << ") header size: " << cap_conf->datalink_size << std::endl;
+    datalink_id = pcap_datalink(handle);
+    datalink_str = datalink2str(datalink_id);
+    cap_conf->datalink_size = datalink2off(datalink_id);
+    std::cerr << "datalink: " << datalink_id << "(" << datalink_str << ") header size: " << cap_conf->datalink_size
+              << std::endl;
 
     if (-1 == pcap_loop(handle, -1, pcap_callback, reinterpret_cast<u_char *>(cap_conf))) {
         std::cerr << "pcap_loop(): " << pcap_geterr(handle) << std::endl;
