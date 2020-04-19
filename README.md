@@ -39,8 +39,8 @@ or directly download [Release](https://github.com/six-ddc/httpflow/releases) bin
 ## Usage
 
 ```
-libpcap version libpcap version 1.8.1 -- Apple version 67.60.1
-httpflow version 0.0.6
+libpcap version libpcap version 1.9.1
+httpflow version 0.0.8
 
 Usage: httpflow [-i interface | -r pcap-file] [-f packet-filter] [-u url-filter] [-w output-path]
 
@@ -54,7 +54,6 @@ Usage: httpflow [-i interface | -r pcap-file] [-f packet-filter] [-u url-filter]
   -w output-path    Write the http request and response to a specific directory
 
   For more information, see https://github.com/six-ddc/httpflow
-
 ```
 
 * Capture default interface
