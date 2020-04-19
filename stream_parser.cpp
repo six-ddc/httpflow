@@ -94,10 +94,6 @@ int stream_parser::on_header_value(http_parser *parser, const char *at, size_t l
         if (self->temp_header_field == "content-encoding" && std::strstr(at, "gzip")) {
             self->gzip_flag = true;
         }
-    } else {
-        if (self->temp_header_field == "host") {
-            self->host.assign(at, length);
-        }
     }
     // std::cout << self->temp_header_field <<  ":" << std::string(at, length) << std::endl;
     return 0;
@@ -143,10 +139,17 @@ bool stream_parser::match_url(const std::string &url) {
 }
 
 void stream_parser::save_http_request() {
-    std::cout << ANSI_COLOR_CYAN << address[HTTP_REQUEST] << " -> " << address[HTTP_RESPONSE]
-              << ANSI_COLOR_RESET << std::endl;
+    std::size_t i = url.find('?');
+    std::string url_no_query = i == std::string::npos ? url : url.substr(0, i);
     if (!output_path.empty()) {
-        std::string save_filename = output_path + "/" + host;
+        static size_t req_idx = 0;
+        char buff[64];
+        std::snprintf(buff, 64, "/%p.%lu", this, ++req_idx);
+        std::string save_filename = output_path;
+        save_filename.append(buff);
+        std::cout << ANSI_COLOR_CYAN << address[HTTP_REQUEST] << " -> " << address[HTTP_RESPONSE]
+                  << " " << url_no_query << ANSI_COLOR_RESET
+                  << " saved at " << save_filename << std::endl;
         std::ofstream out(save_filename.c_str(), std::ios::app | std::ios::out);
         if (out.is_open()) {
             out << *this << std::endl;
@@ -157,6 +160,8 @@ void stream_parser::save_http_request() {
             exit(1);
         }
     } else {
+        std::cout << ANSI_COLOR_CYAN << address[HTTP_REQUEST] << " -> " << address[HTTP_RESPONSE]
+                  << " " << url_no_query << ANSI_COLOR_RESET << std::endl;
         std::cout << *this << std::endl;
     }
     // clear

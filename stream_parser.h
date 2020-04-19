@@ -34,7 +34,6 @@ private:
 
     std::string temp_header_field;
     bool gzip_flag;
-    std::string host;
 
 public:
     stream_parser(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &output_path);
