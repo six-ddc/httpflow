@@ -9,8 +9,10 @@ stream_parser::stream_parser(const pcre *url_filter_re, const pcre_extra *url_fi
         gzip_flag(false) {
     next_seq[HTTP_REQUEST] = 0;
     next_seq[HTTP_RESPONSE] = 0;
-    http_parser_init(&parser, HTTP_REQUEST);
-    parser.data = this;
+    http_parser_init(&parser[HTTP_REQUEST], HTTP_REQUEST);
+    parser[HTTP_REQUEST].data = this;
+    http_parser_init(&parser[HTTP_RESPONSE], HTTP_RESPONSE);
+    parser[HTTP_RESPONSE].data = this;
 
     http_parser_settings_init(&settings);
     settings.on_url = on_url;
@@ -22,33 +24,30 @@ stream_parser::stream_parser(const pcre *url_filter_re, const pcre_extra *url_fi
 }
 
 bool stream_parser::parse(const struct packet_info &packet, enum http_parser_type type) {
-    if (parser.type != type) {
-        http_parser_init(&parser, type);
-    }
     size_t orig_size = 0;
     std::string *str = NULL;
-    if (parser.type == HTTP_REQUEST || parser.type == HTTP_RESPONSE) {
-        orig_size = raw[parser.type].size();
-        str = &raw[parser.type];
-        if (next_seq[parser.type] != 0 && packet.seq != next_seq[parser.type]) {
-            if (packet.seq < next_seq[parser.type]) {
+    if (type == HTTP_REQUEST || type == HTTP_RESPONSE) {
+        orig_size = raw[type].size();
+        str = &raw[type];
+        if (next_seq[type] != 0 && packet.seq != next_seq[type]) {
+            if (packet.seq < next_seq[type]) {
                 // retransmission packet
                 return true;
             } else {
                 // out-of-order packet
-                out_of_order_packet[parser.type].insert(std::make_pair(packet.seq, packet.body));
+                out_of_order_packet[type].insert(std::make_pair(packet.seq, packet.body));
             }
         } else {
             str->append(packet.body);
-            next_seq[parser.type] = packet.seq + packet.body.size();
+            next_seq[type] = packet.seq + packet.body.size();
         }
-        while (!out_of_order_packet[parser.type].empty()) {
+        while (!out_of_order_packet[type].empty()) {
             const std::map<uint32_t, std::string>::iterator &iterator =
-                    out_of_order_packet[parser.type].find(next_seq[parser.type]);
-            if (iterator != out_of_order_packet[parser.type].end()) {
+                    out_of_order_packet[type].find(next_seq[type]);
+            if (iterator != out_of_order_packet[type].end()) {
                 str->append(iterator->second);
-                next_seq[parser.type] += iterator->second.size();
-                out_of_order_packet[parser.type].erase(iterator);
+                next_seq[type] += iterator->second.size();
+                out_of_order_packet[type].erase(iterator);
             } else {
                 break;
             }
@@ -56,15 +55,16 @@ bool stream_parser::parse(const struct packet_info &packet, enum http_parser_typ
     }
 
     if (str->size() > orig_size) {
-        size_t parse_bytes = http_parser_execute(&parser, &settings, str->c_str() + orig_size, str->size() - orig_size);
-        return parse_bytes > 0 && HTTP_PARSER_ERRNO(&parser) == HPE_OK;
+        size_t parse_bytes = http_parser_execute(&parser[type], &settings, str->c_str() + orig_size,
+                                                 str->size() - orig_size);
+        return parse_bytes > 0 && HTTP_PARSER_ERRNO(&parser[type]) == HPE_OK;
     }
     return true;
 }
 
 void stream_parser::set_addr(const std::string &req_addr, const std::string &resp_addr) {
-    this->address[HTTP_REQUEST] = req_addr;
-    this->address[HTTP_RESPONSE] = resp_addr;
+    this->address[HTTP_REQUEST].assign(req_addr);
+    this->address[HTTP_RESPONSE].assign(resp_addr);
 }
 
 int stream_parser::on_url(http_parser *parser, const char *at, size_t length) {
@@ -121,12 +121,21 @@ int stream_parser::on_message_complete(http_parser *parser) {
         if (self->gzip_flag && !self->body[HTTP_RESPONSE].empty()) {
             std::string new_body;
             if (gzip_decompress(self->body[HTTP_RESPONSE], new_body)) {
-                self->body[HTTP_RESPONSE] = new_body;
+                self->body[HTTP_RESPONSE].assign(new_body);
             } else {
                 std::cerr << ANSI_COLOR_RED << "[decompress error]" << ANSI_COLOR_RESET << std::endl;
             }
         }
-        self->save_http_request();
+        if (parser->type == HTTP_RESPONSE && parser->status_code == HTTP_STATUS_CONTINUE) {
+            self->header_100_continue.assign(self->header[HTTP_RESPONSE]);
+            self->body_100_continue.assign(self->body[HTTP_RESPONSE]);
+            self->raw[HTTP_RESPONSE].clear();
+            self->body[HTTP_RESPONSE].clear();
+            // reset response parser
+            http_parser_init(parser, HTTP_RESPONSE);
+        } else {
+            self->save_http_request();
+        }
     }
     return 0;
 }
@@ -169,12 +178,22 @@ void stream_parser::save_http_request() {
     raw[HTTP_RESPONSE] = std::string();
     body[HTTP_REQUEST] = std::string();
     body[HTTP_RESPONSE] = std::string();
+    header_100_continue.clear();
+    body_100_continue.clear();
 }
 
 std::ostream &operator<<(std::ostream &out, const stream_parser &parser) {
     out << ANSI_COLOR_GREEN
         << parser.header[HTTP_REQUEST]
         << ANSI_COLOR_RESET;
+    if (!parser.header_100_continue.empty()) {
+        out << ANSI_COLOR_BLUE
+            << parser.header_100_continue
+            << ANSI_COLOR_RESET;
+    }
+    if (!parser.body_100_continue.empty()) {
+        out << parser.body_100_continue;
+    }
     if (!is_atty || is_plain_text(parser.body[HTTP_REQUEST])) {
         out << parser.body[HTTP_REQUEST];
     } else {
@@ -193,11 +212,14 @@ std::ostream &operator<<(std::ostream &out, const stream_parser &parser) {
         out << ANSI_COLOR_RED << "[binary response body] (size:" << parser.body[HTTP_RESPONSE].size() << ")"
             << ANSI_COLOR_RESET;
     }
+    out << std::endl;
     return out;
 }
 
 std::ofstream &operator<<(std::ofstream &out, const stream_parser &parser) {
     out << parser.header[HTTP_REQUEST]
+        << parser.header_100_continue
+        << parser.body_100_continue
         << parser.body[HTTP_REQUEST]
         << parser.header[HTTP_RESPONSE]
         << parser.body[HTTP_RESPONSE];

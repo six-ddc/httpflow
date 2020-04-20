@@ -19,18 +19,21 @@ private:
     const pcre_extra *url_filter_extra;
     const std::string &output_path;
 
-    http_parser parser;
     http_parser_settings settings;
 
     std::string method;
     std::string url;
 
+    http_parser parser[HTTP_BOTH];
     std::string address[HTTP_BOTH];
     std::string raw[HTTP_BOTH];
     std::string header[HTTP_BOTH];
     std::string body[HTTP_BOTH];
     uint32_t next_seq[HTTP_BOTH];
     std::map<uint32_t, std::string> out_of_order_packet[HTTP_BOTH];
+
+    std::string header_100_continue;
+    std::string body_100_continue;
 
     std::string temp_header_field;
     bool gzip_flag;
