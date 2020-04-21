@@ -180,9 +180,10 @@ struct ether_header {
 };
 
 void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &output_path,
-                    const u_char *data, size_t len) {
+                    const u_char *data, size_t len, long ts_usc) {
 
     struct packet_info packet;
+    packet.ts_usc = ts_usc;
     bool ret = process_ipv4(&packet, data, len);
     if (!ret || (packet.body.empty() && !packet.is_fin)) return;
 
@@ -225,8 +226,9 @@ void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *
     // skip datalink
     content += conf->datalink_size;
     size_t len = header->caplen - conf->datalink_size;
+    long ts = header->ts.tv_sec * 1000000 + header->ts.tv_usec;
 
-    return process_packet(conf->url_filter_re, conf->url_filter_extra, conf->output_path, content, len);
+    return process_packet(conf->url_filter_re, conf->url_filter_extra, conf->output_path, content, len, ts);
 }
 
 static const struct option longopts[] = {

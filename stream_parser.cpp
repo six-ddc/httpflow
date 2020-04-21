@@ -7,8 +7,8 @@ stream_parser::stream_parser(const pcre *url_filter_re, const pcre_extra *url_fi
         url_filter_extra(url_filter_extra),
         output_path(output_path),
         gzip_flag(false) {
-    next_seq[HTTP_REQUEST] = 0;
-    next_seq[HTTP_RESPONSE] = 0;
+    std::memset(&next_seq, 0, sizeof next_seq);
+    std::memset(&ts_usc, 0, sizeof ts_usc);
     http_parser_init(&parser[HTTP_REQUEST], HTTP_REQUEST);
     parser[HTTP_REQUEST].data = this;
     http_parser_init(&parser[HTTP_RESPONSE], HTTP_RESPONSE);
@@ -16,6 +16,7 @@ stream_parser::stream_parser(const pcre *url_filter_re, const pcre_extra *url_fi
 
     http_parser_settings_init(&settings);
     settings.on_url = on_url;
+    settings.on_message_begin = on_message_begin;
     settings.on_header_field = on_header_field;
     settings.on_header_value = on_header_value;
     settings.on_headers_complete = on_headers_complete;
@@ -55,6 +56,7 @@ bool stream_parser::parse(const struct packet_info &packet, enum http_parser_typ
     }
 
     if (str->size() > orig_size) {
+        last_ts_usc = packet.ts_usc;
         size_t parse_bytes = http_parser_execute(&parser[type], &settings, str->c_str() + orig_size,
                                                  str->size() - orig_size);
         return parse_bytes > 0 && HTTP_PARSER_ERRNO(&parser[type]) == HPE_OK;
@@ -65,6 +67,14 @@ bool stream_parser::parse(const struct packet_info &packet, enum http_parser_typ
 void stream_parser::set_addr(const std::string &req_addr, const std::string &resp_addr) {
     this->address[HTTP_REQUEST].assign(req_addr);
     this->address[HTTP_RESPONSE].assign(resp_addr);
+}
+
+int stream_parser::on_message_begin(http_parser *parser) {
+    stream_parser *self = reinterpret_cast<stream_parser *>(parser->data);
+    if (parser->type == HTTP_REQUEST) {
+        self->ts_usc[parser->type] = self->last_ts_usc;
+    }
+    return 0;
 }
 
 int stream_parser::on_url(http_parser *parser, const char *at, size_t length) {
@@ -93,6 +103,10 @@ int stream_parser::on_header_value(http_parser *parser, const char *at, size_t l
     if (parser->type == HTTP_RESPONSE) {
         if (self->temp_header_field == "content-encoding" && std::strstr(at, "gzip")) {
             self->gzip_flag = true;
+        }
+    } else {
+        if (self->temp_header_field == "host") {
+            self->host.assign(at, length);
         }
     }
     // std::cout << self->temp_header_field <<  ":" << std::string(at, length) << std::endl;
@@ -134,6 +148,7 @@ int stream_parser::on_message_complete(http_parser *parser) {
             // reset response parser
             http_parser_init(parser, HTTP_RESPONSE);
         } else {
+            self->ts_usc[parser->type] = self->last_ts_usc;
             self->save_http_request();
         }
     }
@@ -150,15 +165,27 @@ bool stream_parser::match_url(const std::string &url) {
 void stream_parser::save_http_request() {
     std::size_t i = url.find('?');
     std::string url_no_query = i == std::string::npos ? url : url.substr(0, i);
+
+    std::cout << ANSI_COLOR_CYAN << address[HTTP_REQUEST] << " -> " << address[HTTP_RESPONSE];
+    if (!host.empty()) {
+        std::cout << " " << ANSI_COLOR_GREEN << host << ANSI_COLOR_CYAN;
+    }
+    std::cout << " " << url_no_query << ANSI_COLOR_RESET;
+
+    char buff[128];
+    if (ts_usc[HTTP_REQUEST] % 1000000 == 0 && ts_usc[HTTP_RESPONSE] % 1000000 == 0) {
+        std::snprintf(buff, 128, " cost %lu ", (ts_usc[HTTP_RESPONSE] - ts_usc[HTTP_REQUEST]) / 1000000);
+    } else {
+        std::snprintf(buff, 128, " cost %.6f ", (ts_usc[HTTP_RESPONSE] - ts_usc[HTTP_REQUEST]) / 1000000.0);
+    }
+    std::cout << buff;
+
     if (!output_path.empty()) {
         static size_t req_idx = 0;
-        char buff[64];
-        std::snprintf(buff, 64, "/%p.%lu", this, ++req_idx);
+        std::snprintf(buff, 128, "/%p.%lu", this, ++req_idx);
         std::string save_filename = output_path;
         save_filename.append(buff);
-        std::cout << ANSI_COLOR_CYAN << address[HTTP_REQUEST] << " -> " << address[HTTP_RESPONSE]
-                  << " " << url_no_query << ANSI_COLOR_RESET
-                  << " saved at " << save_filename << std::endl;
+        std::cout << " saved at " << save_filename << std::endl;
         std::ofstream out(save_filename.c_str(), std::ios::app | std::ios::out);
         if (out.is_open()) {
             out << *this << std::endl;
@@ -169,9 +196,7 @@ void stream_parser::save_http_request() {
             exit(1);
         }
     } else {
-        std::cout << ANSI_COLOR_CYAN << address[HTTP_REQUEST] << " -> " << address[HTTP_RESPONSE]
-                  << " " << url_no_query << ANSI_COLOR_RESET << std::endl;
-        std::cout << *this << std::endl;
+        std::cout << std::endl << *this << std::endl;
     }
     // clear
     raw[HTTP_REQUEST] = std::string();
@@ -180,6 +205,8 @@ void stream_parser::save_http_request() {
     body[HTTP_RESPONSE] = std::string();
     header_100_continue.clear();
     body_100_continue.clear();
+    host.clear();
+    std::memset(&ts_usc, 0, sizeof ts_usc);
 }
 
 std::ostream &operator<<(std::ostream &out, const stream_parser &parser) {

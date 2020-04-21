@@ -94,3 +94,9 @@ Usage: httpflow [-i interface | -r pcap-file] [-f packet-filter] [-u url-filter]
 ```bash
 > tcpdump -w - | httpflow -r -
 ```
+
+* Write the HTTP request and response to directory `/tmp/http`
+
+```bash
+> httpflow -w /tmp/http
+```

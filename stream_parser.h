@@ -23,7 +23,10 @@ private:
 
     std::string method;
     std::string url;
+    std::string host;
 
+    long last_ts_usc;
+    long ts_usc[HTTP_BOTH];
     http_parser parser[HTTP_BOTH];
     std::string address[HTTP_BOTH];
     std::string raw[HTTP_BOTH];
@@ -52,6 +55,8 @@ public:
     bool match_url(const std::string &url);
 
     void save_http_request();
+
+    static int on_message_begin(http_parser *parser);
 
     static int on_url(http_parser *parser, const char *at, size_t length);
 

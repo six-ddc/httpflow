@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 struct packet_info {
+    long ts_usc;
     std::string src_addr;
     std::string dst_addr;
     bool is_fin;
