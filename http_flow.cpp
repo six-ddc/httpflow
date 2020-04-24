@@ -76,11 +76,18 @@ static bool process_tcp(struct packet_info *packet, const u_char *content, size_
     packet->src_addr.assign(buff);
     std::snprintf(buff, 128, "%s:%d", packet->dst_addr.c_str(), dst_port);
     packet->dst_addr.assign(buff);
-    packet->is_fin = !!(tcp_header->th_flags & (TH_FIN | TH_RST));
+    packet->is_fin = tcp_header->th_flags & TH_FIN;
+    packet->is_rst = tcp_header->th_flags & TH_RST;
 
     content += tcp_header_len;
     packet->body = std::string(reinterpret_cast<const char *>(content), len - tcp_header_len);
     packet->seq = htonl(tcp_header->th_seq);
+    packet->ack = htonl(tcp_header->th_ack);
+    if (tcp_header->th_flags & (TH_FIN | TH_SYN)) {
+        packet->nxtseq = packet->seq + 1;
+    } else {
+        packet->nxtseq = packet->seq + packet->body.size();
+    }
     return true;
 }
 
@@ -185,7 +192,7 @@ void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extr
     struct packet_info packet;
     packet.ts_usc = ts_usc;
     bool ret = process_ipv4(&packet, data, len);
-    if (!ret || (packet.body.empty() && !packet.is_fin)) return;
+    if (!ret || (packet.body.empty() && !packet.is_fin && !packet.is_rst)) return;
 
     std::string join_addr;
     get_join_addr(packet.src_addr, packet.dst_addr, join_addr);
@@ -210,9 +217,13 @@ void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extr
         }
     }
 
-    if (packet.is_fin && iter != http_requests.end()) {
-        delete iter->second;
-        http_requests.erase(iter);
+    if (iter != http_requests.end()) {
+        stream_parser *parser = iter->second;
+        if (packet.is_rst || parser->is_stream_fin(packet)) {
+            parser->dump_http_request();
+            delete parser;
+            http_requests.erase(iter);
+        }
     }
 }
 

@@ -6,7 +6,9 @@ stream_parser::stream_parser(const pcre *url_filter_re, const pcre_extra *url_fi
         url_filter_re(url_filter_re),
         url_filter_extra(url_filter_extra),
         output_path(output_path),
-        gzip_flag(false) {
+        gzip_flag(false),
+        dump_flag(-1),
+        fin_src(-1) {
     std::memset(&next_seq, 0, sizeof next_seq);
     std::memset(&ts_usc, 0, sizeof ts_usc);
     http_parser_init(&parser[HTTP_REQUEST], HTTP_REQUEST);
@@ -74,6 +76,7 @@ int stream_parser::on_message_begin(http_parser *parser) {
     if (parser->type == HTTP_REQUEST) {
         self->ts_usc[parser->type] = self->last_ts_usc;
     }
+    self->dump_flag = 0;
     return 0;
 }
 
@@ -117,6 +120,9 @@ int stream_parser::on_headers_complete(http_parser *parser) {
     if (parser->type == HTTP_REQUEST || parser->type == HTTP_RESPONSE) {
         stream_parser *self = reinterpret_cast<stream_parser *>(parser->data);
         self->header[parser->type] = self->raw[parser->type].substr(0, parser->nread);
+        if (parser->type == HTTP_RESPONSE) {
+            self->ts_usc[parser->type] = self->last_ts_usc;
+        }
     }
     return 0;
 }
@@ -125,6 +131,9 @@ int stream_parser::on_body(http_parser *parser, const char *at, size_t length) {
     if (parser->type == HTTP_REQUEST || parser->type == HTTP_RESPONSE) {
         stream_parser *self = reinterpret_cast<stream_parser *>(parser->data);
         self->body[parser->type].append(at, length);
+        if (parser->type == HTTP_RESPONSE) {
+            self->ts_usc[parser->type] = self->last_ts_usc;
+        }
     }
     return 0;
 }
@@ -132,14 +141,6 @@ int stream_parser::on_body(http_parser *parser, const char *at, size_t length) {
 int stream_parser::on_message_complete(http_parser *parser) {
     stream_parser *self = reinterpret_cast<stream_parser *>(parser->data);
     if (parser->type == HTTP_RESPONSE) {
-        if (self->gzip_flag && !self->body[HTTP_RESPONSE].empty()) {
-            std::string new_body;
-            if (gzip_decompress(self->body[HTTP_RESPONSE], new_body)) {
-                self->body[HTTP_RESPONSE].assign(new_body);
-            } else {
-                std::cerr << ANSI_COLOR_RED << "[decompress error]" << ANSI_COLOR_RESET << std::endl;
-            }
-        }
         if (parser->type == HTTP_RESPONSE && parser->status_code == HTTP_STATUS_CONTINUE) {
             self->header_100_continue.assign(self->header[HTTP_RESPONSE]);
             self->body_100_continue.assign(self->body[HTTP_RESPONSE]);
@@ -149,7 +150,7 @@ int stream_parser::on_message_complete(http_parser *parser) {
             http_parser_init(parser, HTTP_RESPONSE);
         } else {
             self->ts_usc[parser->type] = self->last_ts_usc;
-            self->save_http_request();
+            self->dump_http_request();
         }
     }
     return 0;
@@ -162,14 +163,24 @@ bool stream_parser::match_url(const std::string &url) {
     return rc >= 0;
 }
 
-void stream_parser::save_http_request() {
-    std::size_t i = url.find('?');
-    std::string url_no_query = i == std::string::npos ? url : url.substr(0, i);
+void stream_parser::dump_http_request() {
+    if (dump_flag != 0) return;
+
+    if (gzip_flag && !body[HTTP_RESPONSE].empty()) {
+        std::string new_body;
+        if (gzip_decompress(body[HTTP_RESPONSE], new_body)) {
+            body[HTTP_RESPONSE].assign(new_body);
+        } else {
+            std::cerr << ANSI_COLOR_RED << "[decompress error]" << ANSI_COLOR_RESET << std::endl;
+        }
+    }
 
     std::cout << ANSI_COLOR_CYAN << address[HTTP_REQUEST] << " -> " << address[HTTP_RESPONSE];
     if (!host.empty()) {
         std::cout << " " << ANSI_COLOR_GREEN << host << ANSI_COLOR_CYAN;
     }
+    std::size_t i = url.find('?');
+    std::string url_no_query = i == std::string::npos ? url : url.substr(0, i);
     std::cout << " " << url_no_query << ANSI_COLOR_RESET;
 
     char buff[128];
@@ -207,6 +218,23 @@ void stream_parser::save_http_request() {
     body_100_continue.clear();
     host.clear();
     std::memset(&ts_usc, 0, sizeof ts_usc);
+    dump_flag = 1;
+}
+
+bool stream_parser::is_stream_fin(const struct packet_info &packet) {
+    if (!packet.is_fin) {
+        return false;
+    }
+    int fin_cur = is_request_address(packet.src_addr) ? HTTP_REQUEST : HTTP_RESPONSE;
+    if (fin_src == -1 || fin_src == fin_cur) {
+        fin_src = fin_cur;
+        fin_nxtseq = packet.nxtseq;
+        return false;
+    }
+    if (packet.ack == fin_nxtseq) {
+        return true;
+    }
+    return false;
 }
 
 std::ostream &operator<<(std::ostream &out, const stream_parser &parser) {

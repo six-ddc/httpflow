@@ -13,8 +13,11 @@ struct packet_info {
     std::string src_addr;
     std::string dst_addr;
     bool is_fin;
+    bool is_rst;
     std::string body;
     uint32_t seq;
+    uint32_t nxtseq;
+    uint32_t ack;
 };
 
 extern bool is_atty;

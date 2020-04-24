@@ -40,11 +40,15 @@ private:
 
     std::string temp_header_field;
     bool gzip_flag;
+    int dump_flag;
+
+    int fin_src;
+    uint32_t fin_nxtseq;
 
 public:
     stream_parser(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &output_path);
 
-    bool parse(const struct packet_info &body, enum http_parser_type type);
+    bool parse(const struct packet_info &packet, enum http_parser_type type);
 
     inline bool is_request_address(const std::string &addr) const {
         return address[HTTP_REQUEST] == addr;
@@ -54,7 +58,9 @@ public:
 
     bool match_url(const std::string &url);
 
-    void save_http_request();
+    void dump_http_request();
+
+    bool is_stream_fin(const struct packet_info &packet);
 
     static int on_message_begin(http_parser *parser);
 
