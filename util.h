@@ -12,6 +12,7 @@ struct packet_info {
     long ts_usc;
     std::string src_addr;
     std::string dst_addr;
+    bool is_syn;
     bool is_fin;
     bool is_rst;
     std::string body;

@@ -76,6 +76,7 @@ static bool process_tcp(struct packet_info *packet, const u_char *content, size_
     packet->src_addr.assign(buff);
     std::snprintf(buff, 128, "%s:%d", packet->dst_addr.c_str(), dst_port);
     packet->dst_addr.assign(buff);
+    packet->is_syn = tcp_header->th_flags & TH_SYN;
     packet->is_fin = tcp_header->th_flags & TH_FIN;
     packet->is_rst = tcp_header->th_flags & TH_RST;
 
@@ -192,14 +193,14 @@ void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extr
     struct packet_info packet;
     packet.ts_usc = ts_usc;
     bool ret = process_ipv4(&packet, data, len);
-    if (!ret || (packet.body.empty() && !packet.is_fin && !packet.is_rst)) return;
+    if (!ret) return;
 
     std::string join_addr;
     get_join_addr(packet.src_addr, packet.dst_addr, join_addr);
     std::map<std::string, stream_parser *>::iterator iter = http_requests.find(join_addr);
 
-    if (!packet.body.empty()) {
-        if (iter == http_requests.end()) {
+    if (iter == http_requests.end()) {
+        if (!packet.body.empty() || (packet.is_syn && packet.ack == 0)) {
             stream_parser *parser = new stream_parser(url_filter_re, url_filter_extra, output_path);
             if (parser->parse(packet, HTTP_REQUEST)) {
                 parser->set_addr(packet.src_addr, packet.dst_addr);
@@ -207,20 +208,11 @@ void process_packet(const pcre *url_filter_re, const pcre_extra *url_filter_extr
             } else {
                 delete parser;
             }
-        } else {
-            stream_parser *parser = iter->second;
-            enum http_parser_type type = parser->is_request_address(packet.src_addr) ? HTTP_REQUEST : HTTP_RESPONSE;
-            if (!parser->parse(packet, type)) {
-                delete parser;
-                http_requests.erase(iter);
-            }
         }
-    }
-
-    if (iter != http_requests.end()) {
+    } else {
         stream_parser *parser = iter->second;
-        if (packet.is_rst || parser->is_stream_fin(packet)) {
-            parser->dump_http_request();
+        enum http_parser_type type = parser->is_request_address(packet.src_addr) ? HTTP_REQUEST : HTTP_RESPONSE;
+        if (!parser->parse(packet, type)) {
             delete parser;
             http_requests.erase(iter);
         }

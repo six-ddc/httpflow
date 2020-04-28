@@ -33,7 +33,7 @@ private:
     std::string header[HTTP_BOTH];
     std::string body[HTTP_BOTH];
     uint32_t next_seq[HTTP_BOTH];
-    std::map<uint32_t, std::string> out_of_order_packet[HTTP_BOTH];
+    std::map<uint32_t, std::pair<std::string, uint32_t> > out_of_order_packet[HTTP_BOTH];
 
     std::string header_100_continue;
     std::string body_100_continue;
@@ -42,8 +42,7 @@ private:
     bool gzip_flag;
     int dump_flag;
 
-    int fin_src;
-    uint32_t fin_nxtseq;
+    uint32_t fin_nxtseq[HTTP_BOTH];
 
 public:
     stream_parser(const pcre *url_filter_re, const pcre_extra *url_filter_extra, const std::string &output_path);
@@ -60,7 +59,7 @@ public:
 
     void dump_http_request();
 
-    bool is_stream_fin(const struct packet_info &packet);
+    bool is_stream_fin(const struct packet_info &packet, enum http_parser_type type);
 
     static int on_message_begin(http_parser *parser);
 

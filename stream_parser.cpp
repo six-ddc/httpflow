@@ -7,10 +7,10 @@ stream_parser::stream_parser(const pcre *url_filter_re, const pcre_extra *url_fi
         url_filter_extra(url_filter_extra),
         output_path(output_path),
         gzip_flag(false),
-        dump_flag(-1),
-        fin_src(-1) {
+        dump_flag(-1) {
     std::memset(&next_seq, 0, sizeof next_seq);
     std::memset(&ts_usc, 0, sizeof ts_usc);
+    std::memset(&fin_nxtseq, 0, sizeof fin_nxtseq);
     http_parser_init(&parser[HTTP_REQUEST], HTTP_REQUEST);
     parser[HTTP_REQUEST].data = this;
     http_parser_init(&parser[HTTP_RESPONSE], HTTP_RESPONSE);
@@ -27,43 +27,47 @@ stream_parser::stream_parser(const pcre *url_filter_re, const pcre_extra *url_fi
 }
 
 bool stream_parser::parse(const struct packet_info &packet, enum http_parser_type type) {
-    size_t orig_size = 0;
     std::string *str = NULL;
-    if (type == HTTP_REQUEST || type == HTTP_RESPONSE) {
-        orig_size = raw[type].size();
-        str = &raw[type];
-        if (next_seq[type] != 0 && packet.seq != next_seq[type]) {
-            if (packet.seq < next_seq[type]) {
-                // retransmission packet
-                return true;
-            } else {
-                // out-of-order packet
-                out_of_order_packet[type].insert(std::make_pair(packet.seq, packet.body));
+    size_t orig_size = raw[type].size();
+    str = &raw[type];
+    if (next_seq[type] != 0 && packet.seq != next_seq[type]) {
+        if (packet.seq < next_seq[type]) {
+            // retransmission packet
+            if (packet.is_rst || is_stream_fin(packet, type)) {
+                dump_http_request();
+                return false;
             }
+            return true;
         } else {
-            str->append(packet.body);
-            next_seq[type] = packet.seq + packet.body.size();
+            // out-of-order packet
+            out_of_order_packet[type].insert(
+                    std::make_pair(packet.seq, std::make_pair(packet.body, packet.nxtseq)));
         }
-        while (!out_of_order_packet[type].empty()) {
-            const std::map<uint32_t, std::string>::iterator &iterator =
-                    out_of_order_packet[type].find(next_seq[type]);
-            if (iterator != out_of_order_packet[type].end()) {
-                str->append(iterator->second);
-                next_seq[type] += iterator->second.size();
-                out_of_order_packet[type].erase(iterator);
-            } else {
-                break;
-            }
-        }
+    } else {
+        str->append(packet.body);
+        next_seq[type] = packet.nxtseq;
+    }
+    while (!out_of_order_packet[type].empty()) {
+        const std::map<uint32_t, std::pair<std::string, uint32_t> >::iterator &iterator =
+                out_of_order_packet[type].find(next_seq[type]);
+        if (iterator == out_of_order_packet[type].end()) break;
+        str->append(iterator->second.first);
+        next_seq[type] = iterator->second.second;
+        out_of_order_packet[type].erase(iterator);
     }
 
+    bool ret = true;
     if (str->size() > orig_size) {
         last_ts_usc = packet.ts_usc;
         size_t parse_bytes = http_parser_execute(&parser[type], &settings, str->c_str() + orig_size,
                                                  str->size() - orig_size);
-        return parse_bytes > 0 && HTTP_PARSER_ERRNO(&parser[type]) == HPE_OK;
+        ret = parse_bytes > 0 && HTTP_PARSER_ERRNO(&parser[type]) == HPE_OK;
     }
-    return true;
+    if (packet.is_rst || is_stream_fin(packet, type)) {
+        dump_http_request();
+        return false;
+    }
+    return ret;
 }
 
 void stream_parser::set_addr(const std::string &req_addr, const std::string &resp_addr) {
@@ -184,12 +188,14 @@ void stream_parser::dump_http_request() {
     std::cout << " " << url_no_query << ANSI_COLOR_RESET;
 
     char buff[128];
-    if (ts_usc[HTTP_REQUEST] % 1000000 == 0 && ts_usc[HTTP_RESPONSE] % 1000000 == 0) {
-        std::snprintf(buff, 128, " cost %lu ", (ts_usc[HTTP_RESPONSE] - ts_usc[HTTP_REQUEST]) / 1000000);
-    } else {
-        std::snprintf(buff, 128, " cost %.6f ", (ts_usc[HTTP_RESPONSE] - ts_usc[HTTP_REQUEST]) / 1000000.0);
+    if (ts_usc[HTTP_RESPONSE] && ts_usc[HTTP_REQUEST]) {
+        if (ts_usc[HTTP_REQUEST] % 1000000 == 0 && ts_usc[HTTP_RESPONSE] % 1000000 == 0) {
+            std::snprintf(buff, 128, " cost %lu ", (ts_usc[HTTP_RESPONSE] - ts_usc[HTTP_REQUEST]) / 1000000);
+        } else {
+            std::snprintf(buff, 128, " cost %.6f ", (ts_usc[HTTP_RESPONSE] - ts_usc[HTTP_REQUEST]) / 1000000.0);
+        }
+        std::cout << buff;
     }
-    std::cout << buff;
 
     if (!output_path.empty()) {
         static size_t req_idx = 0;
@@ -221,20 +227,14 @@ void stream_parser::dump_http_request() {
     dump_flag = 1;
 }
 
-bool stream_parser::is_stream_fin(const struct packet_info &packet) {
-    if (!packet.is_fin) {
+bool stream_parser::is_stream_fin(const struct packet_info &packet, enum http_parser_type type) {
+    // three-way handshake
+    if (packet.is_fin) {
+        fin_nxtseq[type] = packet.nxtseq;
         return false;
+    } else {
+        return fin_nxtseq[HTTP_REQUEST] && fin_nxtseq[HTTP_RESPONSE] && packet.ack == fin_nxtseq[!type];
     }
-    int fin_cur = is_request_address(packet.src_addr) ? HTTP_REQUEST : HTTP_RESPONSE;
-    if (fin_src == -1 || fin_src == fin_cur) {
-        fin_src = fin_cur;
-        fin_nxtseq = packet.nxtseq;
-        return false;
-    }
-    if (packet.ack == fin_nxtseq) {
-        return true;
-    }
-    return false;
 }
 
 std::ostream &operator<<(std::ostream &out, const stream_parser &parser) {
