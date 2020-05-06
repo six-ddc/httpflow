@@ -224,6 +224,7 @@ void stream_parser::dump_http_request() {
     body_100_continue.clear();
     host.clear();
     std::memset(&ts_usc, 0, sizeof ts_usc);
+    gzip_flag = false;
     dump_flag = 1;
 }
 
