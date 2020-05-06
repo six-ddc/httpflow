@@ -40,7 +40,7 @@ or directly download [Release](https://github.com/six-ddc/httpflow/releases) bin
 
 ```
 libpcap version libpcap version 1.9.1
-httpflow version 0.0.8
+httpflow version 0.0.9
 
 Usage: httpflow [-i interface | -r pcap-file] [-f packet-filter] [-u url-filter] [-w output-path]
 
