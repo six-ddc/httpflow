@@ -237,32 +237,30 @@ void pcap_callback(u_char *arg, const struct pcap_pkthdr *header, const u_char *
 static const struct option longopts[] = {
         {"help",        no_argument,       NULL, 'h'},
         {"interface",   required_argument, NULL, 'i'},
-        {"filter",      required_argument, NULL, 'f'},
         {"url-filter",  required_argument, NULL, 'u'},
         {"pcap-file",   required_argument, NULL, 'r'},
         {"output-path", required_argument, NULL, 'w'},
         {NULL, 0,                          NULL, 0}
 };
 
-#define SHORTOPTS "hi:f:u:r:w:"
+#define SHORTOPTS "hi:u:r:w:"
 
 int print_usage() {
     std::cerr << "libpcap version " << pcap_lib_version() << "\n"
               << "httpflow version " HTTPFLOW_VERSION "\n"
               << "\n"
-              << "Usage: httpflow [-i interface | -r pcap-file] [-f packet-filter] [-u url-filter] [-w output-path]"
+              << "Usage: httpflow [-i interface | -r pcap-file] [-u url-filter] [-w output-path] [expression]"
               << "\n"
               << "\n"
-              << "  -i interface      Listen on interface" << "\n"
-              << "  -r pcap-file      Read packets from file (which was created by tcpdump with the -w option)" << "\n"
-              << "                    Standard input is used if file is '-'" << "\n"
-              << "  -f packet-filter  Selects which packets will be dumped" << "\n"
-              << "                    If filter expression is given, only packets for which expression is 'true' will be dumped"
+              << "  -i interface      Listen on interface, This is same as tcpdump 'interface'\n"
+              << "  -r pcap-file      Read packets from file (which was created by tcpdump with the -w option)\n"
+              << "                    Standard input is used if file is '-'\n"
+              << "  -u url-filter     Matches which urls will be dumped\n"
+              << "  -w output-path    Write the http request and response to a specific directory\n"
               << "\n"
-              << "                    For the expression syntax, see pcap-filter(7)" << "\n"
-              << "  -u url-filter     Matches which urls will be dumped" << "\n"
-              << "  -w output-path    Write the http request and response to a specific directory" << "\n"
-              << "\n"
+              << "  expression        Selects which packets will be dumped, The format is the same as tcpdump's 'expression' argument\n"
+              << "                    If filter expression is given, only packets for which expression is 'true' will be dumped\n"
+              << "                    For the expression syntax, see pcap-filter(7)" << "\n\n"
               << "  For more information, see https://github.com/six-ddc/httpflow" << "\n\n";
     exit(0);
 }
@@ -282,6 +280,37 @@ capture_config *default_config() {
     return conf;
 }
 
+static std::string copy_argv(char **argv) {
+    char **p;
+    size_t len = 0;
+    char *src;
+    std::string buf;
+    std::string::iterator dst;
+
+    p = argv;
+    if (*p == NULL)
+        return buf;
+
+    while (*p)
+        len += strlen(*p++) + 1;
+
+    buf.assign(len - 1, 0);
+    if (buf.empty()) {
+        return buf;
+    }
+
+    p = argv;
+    dst = buf.begin();
+    while ((src = *p++) != NULL) {
+        if (src != *argv) {
+            *(dst - 1) = ' ';
+        }
+        while ((*dst++ = *src++) != '\0');
+    }
+
+    return buf;
+}
+
 int init_capture_config(int argc, char **argv, capture_config *conf, char *errbuf) {
 
     // pcap_if_t *devices = NULL, *iter = NULL;
@@ -293,9 +322,6 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
         switch (op) {
             case 'i':
                 std::strncpy(conf->device, optarg, sizeof(conf->device));
-                break;
-            case 'f':
-                conf->filter = optarg;
                 break;
             case 'u':
                 url_regex.assign(optarg);
@@ -321,6 +347,10 @@ int init_capture_config(int argc, char **argv, capture_config *conf, char *errbu
                 exit(1);
                 break;
         }
+    }
+
+    if (optind < argc) {
+        conf->filter = copy_argv(&argv[optind]);
     }
 
     if (conf->device[0] == 0) {
