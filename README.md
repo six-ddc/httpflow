@@ -74,7 +74,7 @@ Usage: httpflow [-i interface | -r pcap-file] [-u url-filter] [-w output-path] [
 ```bash
 # If no expression is given, all packets on the net will be dumped.
 # For the expression syntax, see pcap-filter(7).
-> httpflow host host httpbin.org or host baidu.com
+> httpflow host httpbin.org or host baidu.com
 ```
 
 * Use the regexp to filter request urls
