@@ -39,7 +39,8 @@ private:
     std::string body_100_continue;
 
     std::string temp_header_field;
-    bool gzip_flag;
+    bool gzip_response_flag;
+    bool gzip_request_flag;
     int dump_flag;
 
     uint32_t fin_nxtseq[HTTP_BOTH];

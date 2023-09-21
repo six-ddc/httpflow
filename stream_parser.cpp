@@ -6,7 +6,8 @@ stream_parser::stream_parser(const pcre *url_filter_re, const pcre_extra *url_fi
         url_filter_re(url_filter_re),
         url_filter_extra(url_filter_extra),
         output_path(output_path),
-        gzip_flag(false),
+        gzip_response_flag(false),
+        gzip_request_flag(false),
         dump_flag(-1) {
     std::memset(&next_seq, 0, sizeof next_seq);
     std::memset(&ts_usc, 0, sizeof ts_usc);
@@ -109,7 +110,11 @@ int stream_parser::on_header_value(http_parser *parser, const char *at, size_t l
     stream_parser *self = reinterpret_cast<stream_parser *>(parser->data);
     if (parser->type == HTTP_RESPONSE) {
         if (self->temp_header_field == "content-encoding" && std::strstr(at, "gzip")) {
-            self->gzip_flag = true;
+            self->gzip_response_flag = true;
+        }
+    } else if (parser->type == HTTP_REQUEST) {
+        if (self->temp_header_field == "content-encoding" && std::strstr(at, "gzip")) {
+            self->gzip_request_flag = true;
         }
     } else {
         if (self->temp_header_field == "host") {
@@ -170,7 +175,7 @@ bool stream_parser::match_url(const std::string &url) {
 void stream_parser::dump_http_request() {
     if (dump_flag != 0) return;
 
-    if (gzip_flag && !body[HTTP_RESPONSE].empty()) {
+    if (gzip_response_flag && !body[HTTP_RESPONSE].empty()) {
         std::string new_body;
         if (gzip_decompress(body[HTTP_RESPONSE], new_body)) {
             body[HTTP_RESPONSE].assign(new_body);
@@ -224,7 +229,8 @@ void stream_parser::dump_http_request() {
     body_100_continue.clear();
     host.clear();
     std::memset(&ts_usc, 0, sizeof ts_usc);
-    gzip_flag = false;
+    gzip_response_flag = false;
+    gzip_request_flag = false;
     dump_flag = 1;
 }
 
@@ -250,7 +256,17 @@ std::ostream &operator<<(std::ostream &out, const stream_parser &parser) {
     if (!parser.body_100_continue.empty()) {
         out << parser.body_100_continue;
     }
-    if (!is_atty || is_plain_text(parser.body[HTTP_REQUEST])) {
+    if(parser.gzip_request_flag) {
+        std::string non_const_request_body;
+        std::string new_body;
+        non_const_request_body.assign(parser.body[HTTP_REQUEST]);
+        if (gzip_decompress(non_const_request_body, new_body)) {
+            out << new_body;
+        } else {
+            out << ANSI_COLOR_RED << "[decompress error]" << ANSI_COLOR_RESET << std::endl;
+        }
+
+    } else if (!is_atty || is_plain_text(parser.body[HTTP_REQUEST])) {
         out << parser.body[HTTP_REQUEST];
     } else {
         out << ANSI_COLOR_RED << "[binary request body] (size:" << parser.body[HTTP_REQUEST].size() << ")"
